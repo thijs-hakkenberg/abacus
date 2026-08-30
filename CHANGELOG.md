@@ -195,6 +195,9 @@ These are decisions, not gaps, and each is recorded in an ADR:
    at once and the suite would stay green (`adr/007`).
 
 [Unreleased]: https://github.com/thijs-hakkenberg/abacus/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/thijs-hakkenberg/abacus/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/thijs-hakkenberg/abacus/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/thijs-hakkenberg/abacus/releases/tag/v0.1.0
+[0.3.0]: https://github.com/thijs-hakkenberg/abacus/releases/tag/v0.3.0
+
+<!-- 0.2.0 and 0.1.0 have no compare links: this repository starts from a single
+     squashed commit, so the tags those releases would point at do not exist here.
+     The entries stay because what changed is still worth knowing. -->
+
