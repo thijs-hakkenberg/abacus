@@ -20,7 +20,7 @@ LIB = os.path.join(REPO_ROOT, "hooks", "lib")
 
 IN_PROGRESS = [{
     "id": "bd-probe-an8", "title": "probe task one", "status": "in_progress",
-    "priority": 2, "issue_type": "task", "assignee": "hakketh",
+    "priority": 2, "issue_type": "task", "assignee": "dev",
     "updated_at": "2026-08-05T21:34:12Z", "started_at": "2026-08-05T21:34:12Z",
 }]
 

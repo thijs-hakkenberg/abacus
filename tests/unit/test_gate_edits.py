@@ -17,7 +17,7 @@ from conftest import pre_tool_payload
 
 CLAIMED = [{
     "id": "bd-a1b2", "title": "implement the thing", "status": "in_progress",
-    "assignee": "hakketh", "updated_at": "2026-08-05T21:34:12Z",
+    "assignee": "dev", "updated_at": "2026-08-05T21:34:12Z",
 }]
 
 
