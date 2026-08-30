@@ -1,20 +1,26 @@
 {
-  "name": "abacus-local",
-  "description": "Local marketplace for the abacus plugin, installed from this repository",
+  "name": "abacus",
+  "description": "Task-scoped cost attribution for Claude Code, built on beads and ccusage",
   "owner": {
     "name": "Thijs Hakkenberg",
-    "email": "thijs-hakkenberg@users.noreply.github.com"
+    "email": "thijs-hakkenberg@users.noreply.github.com",
+    "url": "https://github.com/thijs-hakkenberg"
   },
   "plugins": [
     {
       "name": "abacus",
       "source": "./",
       "description": "Enforces that all Claude Code work is tracked as a beads task, and attaches per-task cost, token and duration attribution from ccusage",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "author": {
         "name": "Thijs Hakkenberg",
         "email": "thijs-hakkenberg@users.noreply.github.com"
-      }
+      },
+      "homepage": "https://github.com/thijs-hakkenberg/abacus",
+      "repository": "https://github.com/thijs-hakkenberg/abacus",
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": ["beads", "ccusage", "cost", "tokens", "attribution", "task-tracking", "hooks"]
     }
   ]
 }

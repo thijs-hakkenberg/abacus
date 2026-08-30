@@ -453,3 +453,76 @@ def test_the_changelog_documents_the_current_version():
         "CHANGELOG.md has no entry for %s; Keep a Changelog is kept in step with "
         "plugin.json version bumps" % version
     )
+
+
+# ── Publication: the repo is its own marketplace ─────────────────────────────
+#
+# This repo is added directly as a marketplace, so `marketplace.json` is not an
+# internal convenience — it is the public entry point, and the install line in the
+# README is what a stranger copies. These four assertions guard the gaps between
+# that file, the plugin manifest and the README.
+
+
+def _marketplace():
+    import json
+
+    with (REPO_ROOT / ".claude-plugin" / "marketplace.json").open(encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _entry():
+    import json
+
+    with (REPO_ROOT / ".claude-plugin" / "plugin.json").open(encoding="utf-8") as fh:
+        name = json.load(fh)["name"]
+    return next(p for p in _marketplace()["plugins"] if p["name"] == name)
+
+
+def test_the_marketplace_is_named_for_the_repository_that_publishes_it():
+    """The name is public: users type `<plugin>@<marketplace>` to install.
+
+    It was `abacus-local` while the repo was only ever added from a path on one
+    machine. Published from GitHub, a name asserting it is local is simply wrong,
+    and every install instruction written against it misleads.
+    """
+    assert _marketplace()["name"] == "abacus"
+
+
+def test_every_plugin_source_is_a_relative_path_inside_the_marketplace():
+    """A source resolves against the *user's* clone, not the author's disk.
+
+    An absolute path, or one escaping upwards with `..`, works on the machine it
+    was written on and nowhere else — a failure that never shows up locally.
+    """
+    for plugin in _marketplace()["plugins"]:
+        source = plugin["source"]
+        assert isinstance(source, str) and source.startswith("./"), (
+            "%s: source %r must be a relative path starting with ./" % (plugin["name"], source)
+        )
+        assert ".." not in source, "%s: source escapes the marketplace root" % plugin["name"]
+
+
+def test_the_marketplace_entry_names_the_public_repository_and_licence():
+    """`/plugin` shows these; without them the entry is anonymous in the browser."""
+    entry = _entry()
+    assert entry.get("repository") == "https://github.com/thijs-hakkenberg/abacus"
+    assert entry.get("homepage") == "https://github.com/thijs-hakkenberg/abacus"
+    assert entry.get("license") == "MIT"
+
+
+def test_the_readme_install_block_matches_the_marketplace_it_describes():
+    """The copy-pasteable lines are derived here so a rename cannot orphan them.
+
+    Rename the marketplace and forget the README, and the two commands a stranger
+    runs first both fail — with nothing in the suite to notice.
+    """
+    market = _marketplace()
+    entry = _entry()
+    shorthand = entry["repository"].replace("https://github.com/", "")
+
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    for line in (
+        "/plugin marketplace add %s" % shorthand,
+        "/plugin install %s@%s" % (entry["name"], market["name"]),
+    ):
+        assert line in readme, "README.md does not document `%s`" % line

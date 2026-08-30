@@ -1,10 +1,13 @@
 {
   "name": "abacus",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Enforces that all Claude Code work is tracked as a beads task, and attaches per-task cost, token and duration attribution from ccusage",
   "author": {
     "name": "Thijs Hakkenberg",
     "email": "thijs-hakkenberg@users.noreply.github.com"
   },
-  "license": "MIT"
+  "homepage": "https://github.com/thijs-hakkenberg/abacus",
+  "repository": "https://github.com/thijs-hakkenberg/abacus",
+  "license": "MIT",
+  "keywords": ["beads", "ccusage", "cost", "tokens", "attribution", "task-tracking", "hooks"]
 }

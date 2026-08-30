@@ -41,14 +41,26 @@ adds tool-call counts when present and is omitted silently when not.
 
 ## Install
 
-This repo doubles as its own local marketplace:
+The repo is its own marketplace, so there is nothing to clone:
 
 ```bash
-/plugin marketplace add /path/to/abacus
-/plugin install abacus@abacus-local
+/plugin marketplace add thijs-hakkenberg/abacus
+/plugin install abacus@abacus
 ```
 
 Restart Claude Code, then confirm the hooks loaded with `claude --debug`.
+
+To work on the plugin instead of just using it, add your own checkout as the
+marketplace — same two commands, with a path in place of the shorthand:
+
+```bash
+/plugin marketplace add /path/to/your/clone
+/plugin install abacus@abacus
+```
+
+Only one marketplace can hold the name `abacus` at a time, so adding a checkout
+replaces the GitHub copy rather than sitting beside it. Re-add the shorthand to go
+back. Either way `/plugin marketplace update abacus` pulls the latest catalogue.
 
 ## What it does, hook by hook
 

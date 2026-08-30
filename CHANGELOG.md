@@ -7,6 +7,39 @@ versioning is tracked separately in each file under `contracts/`.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-08-30
+
+Makes the repository installable as a marketplace in its own right. No code
+changes — the gate, the attribution engine and the five observers are byte for byte
+what 0.3.0 shipped.
+
+### Changed
+
+- **The marketplace is named `abacus`, not `abacus-local`.** The name is public —
+  it is the right-hand side of `/plugin install abacus@abacus` — and asserting
+  *local* was only ever true while the catalogue was added from one machine's disk.
+  Published from GitHub it misdescribes itself, and every install instruction
+  written against it misleads. **This changes the install identifier**: an existing
+  install registered as `abacus@abacus-local` has to be re-added, because Claude
+  Code keys marketplaces by name and cannot follow a marketplace rename (`renames`
+  covers plugin names only).
+- The install section of the README now leads with
+  `/plugin marketplace add thijs-hakkenberg/abacus`, with the local-checkout path
+  kept as the development route rather than the only route.
+
+### Added
+
+- `homepage`, `repository`, `license`, `category` and `keywords` on the plugin
+  entry and in `plugin.json`, so the entry is not anonymous in `/plugin`'s browser.
+- 4 conformance tests over the publication surface, 3 of them guarding a gap
+  between two files rather than the contents of one: the marketplace name matches
+  the repository that publishes it; every plugin `source` is a relative path that
+  cannot escape the marketplace root (an absolute path resolves on the author's
+  machine and nowhere else, a failure that never shows up locally); the entry names
+  the public repository and licence; and **the README's two copy-pasteable install
+  lines are derived from the JSON**, so a future rename cannot quietly orphan the
+  first two commands a stranger runs.
+
 ## [0.3.0] — 2026-08-30
 
 Renames the plugin to **abacus** and prepares it for public release. No behaviour
@@ -194,7 +227,8 @@ These are decisions, not gaps, and each is recorded in an ADR:
    directory, a timeout changed on one side only — but every ADR could be obsolete
    at once and the suite would stay green (`adr/007`).
 
-[Unreleased]: https://github.com/thijs-hakkenberg/abacus/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/thijs-hakkenberg/abacus/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/thijs-hakkenberg/abacus/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/thijs-hakkenberg/abacus/releases/tag/v0.3.0
 
 <!-- 0.2.0 and 0.1.0 have no compare links: this repository starts from a single
