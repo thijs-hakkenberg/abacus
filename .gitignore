@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.DS_Store
+*.egg-info/
+.venv/
+venv/
+
+# Local beads workspace — embedded Dolt data and the machine-local issue log are
+# not source, and this repo dogfoods itself, so a `bd` workspace lives here
+# in normal use (see adr/001). Listed here rather than only in
+# .git/info/exclude, which does not travel to a clone.
+.beads/
+.beads-credential-key
+.dolt/
+*.db
+
+# Per-machine permission grants, not project configuration.
+.claude/settings.local.json
+
+# Scratch directories written by other locally-installed plugins.
+.harness/

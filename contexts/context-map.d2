@@ -1,0 +1,99 @@
+# Context Map: abacus
+#
+# Evans-style relationship labels on the edges describe the nature of each
+# collaboration, not merely the direction data flows. See
+# contexts/abacus-canvas.md for the full Inbound/Outbound
+# Communication tables this diagram summarises.
+#
+# The one edge worth reading twice is `gate -> claude-code-runtime`. Every other
+# outbound edge in this map reports something; that one *decides* something. It
+# is the only place in the plugin where a hook's output can stop a tool call
+# (adr/002), and the reason enforcement is a separate script from attribution.
+
+vars: {
+  d2-config: {
+    layout-engine: elk
+  }
+}
+
+claude-code-runtime: "Claude Code Runtime" {
+  style.fill: "#f0f4f8"
+  label: "Claude Code Runtime\n\nhook events: SessionStart, PreToolUse,\nPostToolUse, UserPromptSubmit, Stop,\nPreCompact, SessionEnd"
+}
+
+developer: "Developer" {
+  shape: person
+  style.fill: "#f0f4f8"
+  label: "Developer\n\nruns bd claim/close;\nreads cost on the issue"
+}
+
+plugin: "abacus" {
+  style.fill: "#8B5E34"
+  style.font-color: "#ffffff"
+
+  gate: "gate_edits.py\n(PreToolUse — the only blocking hook)" {
+    style.fill: "#8B5E34"
+    style.font-color: "#ffffff"
+  }
+  watcher: "watch_bd_commands.py\n(PostToolUse:Bash — attribution engine)" {
+    style.fill: "#8B5E34"
+    style.font-color: "#ffffff"
+  }
+  lifecycle: "session_start · prompt_statusline\nstop_reconcile · session_end" {
+    style.fill: "#8B5E34"
+    style.font-color: "#ffffff"
+  }
+  attribution: "lib/attribution.py\n(builds every abacus_* write)" {
+    style.fill: "#8B5E34"
+    style.font-color: "#ffffff"
+  }
+  state: "ABACUS_STATE_DIR/session-<id>.json\n(current task + cost baseline)" {
+    shape: cylinder
+    style.fill: "#8B5E34"
+    style.font-color: "#ffffff"
+  }
+}
+
+beads: "beads (bd CLI)\nembedded Dolt — the store of record" {
+  shape: cylinder
+  style.fill: "#f0f4f8"
+}
+
+ccusage: "ccusage\n(npx, pinned ccusage@20.0.14)" {
+  style.fill: "#f0f4f8"
+}
+
+otel: "~/.claude/logs/claude-code-events.jsonl\n(OTEL file exporter — optional)" {
+  shape: cylinder
+  style.fill: "#f0f4f8"
+}
+
+claude-code-runtime -> plugin.gate: "emits PreToolUse to (Conformist)"
+claude-code-runtime -> plugin.watcher: "emits PostToolUse:Bash to (Conformist)"
+claude-code-runtime -> plugin.lifecycle: "emits session events to (Conformist)"
+
+plugin.gate -> claude-code-runtime: "returns allow/deny decision to (Conformist)" {
+  style.bold: true
+}
+plugin.lifecycle -> claude-code-runtime: "injects primer / statusline into (Conformist)"
+
+plugin.gate -> beads: "asks what is in progress (Customer/Supplier)"
+plugin.watcher -> beads: "verifies the claimed issue with (Customer/Supplier)"
+plugin.watcher -> plugin.attribution: "delegates finalising to"
+plugin.lifecycle -> plugin.attribution: "delegates finalising to"
+plugin.attribution -> beads: "writes abacus_* metadata to (Customer/Supplier)"
+plugin.attribution -> ccusage: "reads cumulative session total from (Customer/Supplier)"
+plugin.attribution -> otel: "reads tool-call window from (Conformist)"
+
+plugin.gate -> plugin.state: "records baseline in"
+plugin.watcher -> plugin.state: "records claim boundary in"
+plugin.lifecycle -> plugin.state: "creates / prunes"
+plugin.attribution -> plugin.state: "reads baseline from"
+
+plugin.gate -> ccusage: "lazy-snapshot repair only (bounded 4s)" {
+  style.stroke-dash: 3
+}
+
+developer -> beads: "claims and closes tasks in"
+beads -> developer: "surfaces per-task cost to"
+developer -> claude-code-runtime: "prompts"

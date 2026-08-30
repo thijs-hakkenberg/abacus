@@ -1,0 +1,115 @@
+# spec.manifest.yaml — EA graph node declaration
+#
+# One node in an enterprise-architecture graph: what this repo is, which artefacts
+# describe it, and which interfaces it offers. `artefacts:` keeps the British
+# spelling throughout; `tests/unit/test_spec_conformance.py` asserts on that key by
+# name, so the two must agree. See adr/007 for why this file exists at all.
+
+name: "abacus"
+description: "Enforces that every Claude Code edit is attributable to a beads task, and attaches per-task cost, token, duration and model attribution to the issue itself."
+type: application
+ea_layer: application
+owner: "Thijs Hakkenberg"
+status: active
+
+business_capability: "AI Work Attribution & Cost Transparency"
+
+artefacts:
+  adrs: adr/
+  features: features/
+  contexts: contexts/
+  contracts: contracts/
+
+interfaces:
+  inbound:
+    - name: "pre-tool-use-gate"
+      protocol: event
+      schema: "contracts/input/pre-tool-use.md + contracts/output/permission-decision.md — hooks/scripts/gate_edits.py; matcher Edit|Write|NotebookEdit|MultiEdit; the only interface whose response can stop a tool call, see adr/002"
+      sla:
+        latency_p99_ms: 10000
+        availability_pct: 100.0
+    - name: "post-tool-use-bash-watcher"
+      protocol: event
+      schema: "contracts/input/post-tool-use-bash.md — hooks/scripts/watch_bd_commands.py; tokenises the command with shlex rather than regex-matching it, see adr/010"
+      sla:
+        latency_p99_ms: 30000
+        availability_pct: 99.0
+    - name: "session-start-hook"
+      protocol: event
+      schema: "contracts/input/session-start.md — hooks/scripts/session_start.py; creates but never overwrites the cost baseline"
+      sla:
+        latency_p99_ms: 20000
+        availability_pct: 99.0
+    - name: "pre-compact-hook"
+      protocol: event
+      schema: "contracts/input/pre-compact.md — hooks/scripts/session_start.py --precompact; re-primes only, never touches session state"
+      sla:
+        latency_p99_ms: 10000
+        availability_pct: 99.0
+    - name: "user-prompt-submit-hook"
+      protocol: event
+      schema: "contracts/input/user-prompt-submit.md — hooks/scripts/prompt_statusline.py; reads cached state only, spawns no subprocess"
+      sla:
+        latency_p99_ms: 5000
+        availability_pct: 99.0
+    - name: "stop-hook"
+      protocol: event
+      schema: "contracts/input/stop.md — hooks/scripts/stop_reconcile.py; repairs attribution for a close seen outside the watcher; honours stop_hook_active"
+      sla:
+        latency_p99_ms: 10000
+        availability_pct: 99.0
+    - name: "session-end-hook"
+      protocol: event
+      schema: "contracts/input/session-end.md — hooks/scripts/session_end.py; writes an open task as abacus_partial=true, then optionally syncs"
+      sla:
+        latency_p99_ms: 60000
+        availability_pct: 99.0
+  outbound:
+    - name: "bd-metadata-write"
+      protocol: subprocess
+      schema: "contracts/output/bd-metadata-write.md — bd update <id> --set-metadata abacus_*=...; the primary output, see hooks/lib/attribution.py and adr/001"
+      sla:
+        latency_p99_ms: 5000
+        availability_pct: 95.0
+    - name: "permission-decision"
+      protocol: event
+      schema: "contracts/output/permission-decision.md — hookSpecificOutput.permissionDecision on stdout, exit code stays 0; see adr/002"
+      sla:
+        latency_p99_ms: 10000
+        availability_pct: 100.0
+    - name: "injected-context"
+      protocol: event
+      schema: "contracts/output/injected-context.md — hookSpecificOutput.additionalContext; the plugin's only token cost, see adr/009"
+      sla:
+        latency_p99_ms: 5000
+        availability_pct: 99.0
+    - name: "ccusage-cli-query"
+      protocol: subprocess
+      schema: "npx -y ccusage@20.0.14 claude session --json --mode calculate — see hooks/lib/ccusage.py, adr/003"
+      sla:
+        latency_p99_ms: 25000
+        availability_pct: 90.0
+    - name: "bd-workspace-init"
+      protocol: subprocess
+      schema: "bd init --stealth --non-interactive (BD_NON_INTERACTIVE=1) — the only outbound call that creates state in the user's repository; opt-in via auto_init.enabled (default off) and confined to auto_init.roots, success defined by a bd list read-back; see adr/012"
+      sla:
+        latency_p99_ms: 15000
+        availability_pct: 80.0
+    - name: "bd-dolt-sync"
+      protocol: subprocess
+      schema: "bd dolt push | bd dolt sync — opt-in via sync_on_session_end (default off), best-effort, never retried; see contracts/input/session-end.md"
+      sla:
+        latency_p99_ms: 60000
+        availability_pct: 80.0
+
+dependencies:
+  - name: "beads (bd CLI, embedded Dolt) — the task store of record"
+    contract: "adr/001-beads-as-task-store-of-record.md"
+  - name: "ccusage (npx-invoked local CLI, pinned) — the cost source of truth"
+    contract: "adr/003-ccusage-snapshot-diff-per-task.md"
+  - name: "Claude Code hook lifecycle — PreToolUse deny is the enforcement mechanism"
+    contract: "adr/002-gate-breaks-the-exit-zero-contract.md"
+  - name: "OTEL file exporter (~/.claude/logs/claude-code-events.jsonl) — optional enrichment, omitted silently when absent"
+    contract: "contracts/output/bd-metadata-write.md"
+  - name: "git (.git marker and .git/info/exclude) — the project boundary auto-init requires and the file --stealth writes to"
+    contract: "adr/012-workspaces-are-created-only-inside-declared-roots.md"
