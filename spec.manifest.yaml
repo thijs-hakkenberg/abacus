@@ -71,6 +71,12 @@ interfaces:
       sla:
         latency_p99_ms: 5000
         availability_pct: 95.0
+    - name: "audit-report"
+      protocol: cli
+      schema: "contracts/output/audit-report.md — hooks/scripts/audit.py [--json] [--fix]; invoked by /abacus:audit, the task-audit skill and the abacus-auditor agent, never by an event. Writes abacus_backfilled=true metadata for the two repairable gap kinds only; see adr/013"
+      sla:
+        latency_p99_ms: 20000
+        availability_pct: 95.0
     - name: "permission-decision"
       protocol: event
       schema: "contracts/output/permission-decision.md — hookSpecificOutput.permissionDecision on stdout, exit code stays 0; see adr/002"

@@ -65,6 +65,15 @@ def _defaults():
             "stealth": True,
         },
         "prime": {"enabled": True},
+        "audit": {
+            # How long a claim may sit in_progress before the audit calls it
+            # stale. A day, because a claim held overnight is normal and one held
+            # across a weekend is not.
+            "stale_after_h": 24,
+            # How far back the audit looks for commits that fall outside every
+            # claim window. A git revision range, passed to `git log --since`.
+            "commit_window": "30 days ago",
+        },
         # 'push' = `bd dolt push` at session end, 'sync', or 'off'.
         "sync_on_session_end": "off",
         "statusline": True,

@@ -127,6 +127,8 @@ session behaves exactly as if there were no workspace. Costs ~3s, once per proje
 - `/abacus:status` — what is tracked, and whether an edit would be
   allowed
 - `/cost-report` — what recent tasks cost, read back from the issues
+- `/abacus:audit [fix]` — what is untracked or unattributed, and repair the
+  metadata gaps
 
 Or use `bd` directly; the plugin watches for `bd update <id> --claim` and
 `bd close <id>` (and `--status in_progress` / `--status closed`) whichever way you
@@ -167,6 +169,48 @@ recorded. A `$0.00` against a task that ran for an hour is a wrong answer wearin
 the costume of a measurement; an absent key prompts a question instead. The same
 applies to tool-call counts: a readable-but-empty OTEL log writes nothing rather
 than a zero.
+
+## Finding what the gate could not see
+
+The gate stops an untracked `Edit`. It cannot stop a `sed -i` or a heredoc, it never
+sees a commit made in another terminal, and it has nothing to say about a task closed
+while ccusage was unreadable. Those gaps accumulate quietly, so there is something
+that counts them:
+
+```bash
+/abacus:audit          # report
+/abacus:audit fix      # report, and repair the metadata gaps
+```
+
+Behind it: `hooks/scripts/audit.py`, the `task-audit` skill, and an
+`abacus-auditor` agent for the parts that need judgement. Not a hook — it runs only
+when asked. One `bd list --all --json` plus one `git log`; no ccusage, because a
+historical spend cannot be reconstructed. Five kinds of gap:
+
+| kind | what it means | who fixes it |
+|---|---|---|
+| `unclaimed` | nothing is in progress, so edits are being denied right now | you, by claiming |
+| `stale-claim` | a claim held past `audit.stale_after_h`, still accruing cost | needs a decision |
+| `unfinalised` | closed, but its attribution is still marked partial | `--fix` |
+| `unattributed` | closed with no `abacus_*` metadata at all | `--fix` |
+| `untracked-commits` | commits outside every claim window | needs a decision |
+
+**`--fix` writes the middle two and refuses the rest.** Closing a stale claim would
+mark work done that is not done; creating issues for untracked commits is not
+reversible bookkeeping. Both are judgements about intent, so they are reported with a
+proposed command and left alone (adr/013).
+
+**A repair is labelled as one.** Every write carries `abacus_backfilled=true`,
+because a reconstruction after the fact is weaker evidence than a measurement taken
+at the boundary. Where no measurement survived, the basis is `unavailable` with no
+dollar figure — the same rule as everywhere else, never a `$0.00`. A figure that was
+really measured is preserved, not overwritten. An issue attributed before the 0.3.0
+rename, or declaring a schema this version does not know, receives no write at all.
+
+Every ambiguous case reports **no gap**: an unreadable timestamp is not evidence of
+staleness, and `--fix` runs unattended, so the audit is allowed to miss things and
+not allowed to invent them. `ok: false` in the JSON means it could not look — a
+failed read is never reported as a clean workspace.
 
 ## Configuration
 
@@ -238,7 +282,7 @@ Test/override env vars: `ABACUS_CONFIG`, `ABACUS_STATE_DIR`, `ABACUS_CCUSAGE_CMD
 ## Development
 
 ```bash
-python3 -m pytest tests/ -q     # 424 tests, ~3.5 min, no network
+python3 -m pytest tests/ -q     # 496 tests, ~4.5 min, no network
 ```
 
 Fully offline. `bd` and `npx` are stubbed on `PATH` and record their argv; `HOME`
@@ -262,7 +306,7 @@ features/             what it does, executably
 contexts/             where its boundaries are
 contracts/            how to talk to it
 hooks/                lib/ + scripts/ + hooks.json
-commands/  skills/  tests/
+commands/  skills/  agents/  tests/
 ```
 
 Start with `contexts/abacus-canvas.md` for the shape of the thing, or
