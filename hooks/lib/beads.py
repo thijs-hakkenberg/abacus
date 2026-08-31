@@ -107,6 +107,21 @@ def in_progress(cwd=None):
     return {"available": True, "issues": [i for i in data if isinstance(i, dict)]}
 
 
+def list_all(cwd=None):
+    """Every issue in the workspace, closed ones included, with their metadata.
+
+    One call is enough for the whole audit: ``--all`` lifts the default
+    open-issues filter and the rows carry ``metadata``, so there is no need for a
+    per-status list or a ``bd show`` per issue. Same ``available`` contract as
+    ``in_progress`` — False means *could not read*, which is not the same as an
+    empty workspace and must never be reported as one.
+    """
+    ok, data = _run_json(["list", "--all", "--json"], cwd=cwd)
+    if not ok or not isinstance(data, list):
+        return {"available": False, "issues": []}
+    return {"available": True, "issues": [i for i in data if isinstance(i, dict)]}
+
+
 def show(issue_id, cwd=None):
     """One issue as a dict, or None.
 

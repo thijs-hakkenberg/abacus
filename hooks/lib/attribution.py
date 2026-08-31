@@ -175,6 +175,79 @@ def finalise(session, issue_id, cfg, partial=False, cwd=None, now=None):
     return meta
 
 
+def _elapsed_min(issue, now=None):
+    """Wall-clock minutes the issue was open, or None if it cannot be worked out.
+
+    ``minutes_between`` returns 0 for an unparsable timestamp, which is the right
+    answer for a duration that is genuinely zero and the wrong one here — a 0
+    beside a task that ran all afternoon is the same species of lie as a $0.00
+    cost. So the timestamps are parsed first and None is returned rather than
+    falling through to a number.
+    """
+    start = issue.get("started_at") or issue.get("created_at")
+    end = issue.get("closed_at") or issue.get("updated_at") or now
+    if abacus_time.parse_iso(start) is None or abacus_time.parse_iso(end) is None:
+        return None
+    return abacus_time.minutes_between(start, end)
+
+
+def backfill_metadata(issue, now=None):
+    """Attribution for an already-closed `issue`, from what can still be read.
+
+    This is the repair path — the audit calling after the fact, with no live
+    session and no ccusage baseline to diff against. It exists here, beside
+    ``build_metadata``, because ``abacus_*`` keys are constructed in exactly one
+    module and a second constructor in a script is how two writers drift apart.
+
+    What it may and may not do follows from having no measurement:
+
+    - **It never invents a cost.** With no baseline snapshot there is nothing to
+      diff, so the basis is ``unavailable`` and no dollar figure is written. The
+      duration is different in kind — bd's own timestamps make it recoverable
+      exactly, so it is written whenever they parse.
+    - **It never discards one either.** An issue left ``abacus_partial=true``
+      already has a real measured figure banked. Finalising it keeps that figure
+      and only flips the flag; overwriting it with ``unavailable`` would be a
+      repair that destroys the one record of what the work cost.
+    - **It says it was backfilled.** ``abacus_backfilled=true`` is what lets a
+      later reader tell a reconstruction from a measurement, instead of averaging
+      the two together and quietly weakening every figure in the report.
+    """
+    raw = issue.get("metadata")
+    carried = _normalise_prefix(raw) if isinstance(raw, dict) else {}
+
+    meta = {
+        "abacus_schema": SCHEMA_VERSION,
+        "abacus_partial": False,
+        "abacus_backfilled": True,
+    }
+
+    banked = (carried.get("abacus_cost_basis") == COST_BASIS
+              and "abacus_cost_usd_estimate" in carried)
+    if banked:
+        meta["abacus_cost_basis"] = COST_BASIS
+        meta["abacus_cost_usd_estimate"] = carried["abacus_cost_usd_estimate"]
+        for key, _delta_key in _TOKEN_KEYS:
+            if key in carried:
+                meta[key] = carried[key]
+        for key in ("abacus_models", "abacus_tool_calls", "abacus_active_min"):
+            if carried.get(key):
+                meta[key] = carried[key]
+    else:
+        meta["abacus_cost_basis"] = BASIS_UNAVAILABLE
+
+    if carried.get("abacus_session_id"):
+        meta["abacus_session_id"] = carried["abacus_session_id"]
+
+    duration = carried.get("abacus_duration_min")
+    if duration is None:
+        duration = _elapsed_min(issue, now=now)
+    if duration is not None:
+        meta["abacus_duration_min"] = duration
+
+    return meta
+
+
 def clear_current(session, now=None):
     """Stop attributing to the current task."""
     return state_store.update(session, {

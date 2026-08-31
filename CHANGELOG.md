@@ -7,6 +7,77 @@ versioning is tracked separately in each file under `contracts/`.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-08-31
+
+Adds an audit: something that can be pointed at a workspace and asked *is anything
+untracked right now?* The gate stops an untracked edit; it never had an answer for a
+file written by `sed -i`, a commit made in another terminal, or a task closed while
+ccusage was unreadable. Those gaps were accumulating with no way to count them.
+
+The seven hooks are unchanged. Nothing here runs on an event — the audit runs only
+when asked.
+
+### Added
+
+- **`hooks/scripts/audit.py`** — `audit.py [--json] [--fix] [--stale-after-h N]
+  [--since "<git date>"]`. Two subprocesses at most: one `bd list --all --json` for
+  the whole workspace (closed issues and their metadata come back in that one call)
+  and one `git log`, skipped when there is no `.git`. No `npx`, no ccusage: a
+  historical spend cannot be reconstructed, so it is not attempted. Exits 0 whatever
+  it finds, including for an unrecognised flag — it runs inside an agent turn, where
+  a non-zero exit reads as a broken tool call.
+- **`hooks/lib/audit.py`** — five detectors, pure functions over the issue list plus
+  a commit list. `unclaimed` (nothing in progress, so edits are being denied right
+  now), `stale-claim`, `unfinalised`, `unattributed`, `untracked-commits`. Every
+  ambiguous case reports **no gap**: an unreadable timestamp is not evidence of
+  staleness, an unrecognised `abacus_schema` is not evidence of missing attribution,
+  a commit that cannot be placed in time is not evidence of untracked work.
+- **`attribution.backfill_metadata()`** — the audit's write, added beside
+  `build_metadata()` rather than assembled in a skill. `abacus_*` keys are still
+  constructed in exactly one module.
+- **`abacus_backfilled=true`** on every write `--fix` makes. A reconstruction after
+  the fact is weaker evidence than a measurement taken at the boundary, and without
+  this key a reader averages the two together. Documented in
+  `contracts/output/audit-report.md`.
+- **`hooks/lib/gitlog.py`** — a 30-day `git log --no-merges` reader. Timestamps are
+  read as `%ct` (unix epoch) rather than `%cI`, because a `+02:00` offset would fail
+  to parse and every commit would silently become unplaceable in time.
+- **`/abacus:audit`** command, the **`task-audit`** skill, and the
+  **`abacus-auditor`** agent. The script writes; the prose does not, and says so.
+- `audit.stale_after_h` (default 24) and `audit.commit_window` (default
+  `"30 days ago"`) in config.
+- `contracts/output/audit-report.md`, an `audit-report` outbound interface in
+  `spec.manifest.yaml`, `adr/013`, and `features/task-audit.feature` — 16 scenarios,
+  all bound and executing.
+
+### Notes on what `--fix` will not do
+
+`--fix` writes `unattributed` and `unfinalised` only. A **stale claim** is reported
+and never written: closing it would mark work done that is not done, finalising it
+would bank a figure against a task still running. **Untracked commits** are reported
+with their shas and never written: the repair is `bd create`, which is not
+reversible bookkeeping. Both are judgements about intent (adr/013).
+
+Three rules the write inherits. A cost is never invented — no `abacus_session_id`
+means no ccusage reading to recover, so the basis is `unavailable` with **no** dollar
+figure and no token counts, not `0`. A cost is never discarded — an issue that
+already banked a real figure keeps it. A duration is omitted when its timestamps
+cannot be parsed, because `minutes_between` answers `0` for an unparsable date and a
+zero-minute task that ran all afternoon is the same lie as a zero-dollar one.
+
+An issue attributed before the 0.3.0 rename (`tct_*`) and an issue declaring an
+`abacus_schema` this version does not know both receive **no write at all**. Reading
+`tct_*` as absent would make every pre-0.3.0 issue look unattributed and `--fix`
+would overwrite real recorded figures with `unavailable` — the audit destroying the
+data it exists to protect. Both cases are pinned by tests.
+
+### Testing
+
+47 new unit tests (`test_audit.py` for the detectors, `test_audit_cli.py` driving
+the script as a real subprocess and asserting on the recorded `bd` argv) plus 16
+feature scenarios. `git` is not stubbed on `PATH`, so `gitlog` checks for `.git`
+before spawning anything and the suite stays hermetic.
+
 ## [0.3.1] — 2026-08-30
 
 Makes the repository installable as a marketplace in its own right. No code

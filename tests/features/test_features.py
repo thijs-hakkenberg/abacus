@@ -12,6 +12,7 @@ at import time and resolves them from this module's namespace.
 
 from pytest_bdd import scenarios
 
+from audit_steps import *  # noqa: F401,F403
 from auto_init_steps import *  # noqa: F401,F403
 from common_steps import *  # noqa: F401,F403
 from primer_steps import *  # noqa: F401,F403
@@ -25,3 +26,4 @@ scenarios("session-lifecycle-priming.feature")
 scenarios("session-end-finalization.feature")
 scenarios("cost-estimate-labelling.feature")
 scenarios("workspace-auto-init.feature")
+scenarios("task-audit.feature")
