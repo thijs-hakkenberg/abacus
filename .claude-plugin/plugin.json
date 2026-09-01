@@ -1,6 +1,6 @@
 {
   "name": "abacus",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Enforces that all Claude Code work is tracked as a beads task, and attaches per-task cost, token and duration attribution from ccusage",
   "author": {
     "name": "Thijs Hakkenberg",

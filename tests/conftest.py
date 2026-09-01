@@ -14,6 +14,7 @@ Two isolation guarantees hold for every test:
   ccusage (no network, no npx download) or mutates a real beads database.
 """
 
+import importlib
 import json
 import os
 import shutil
@@ -62,6 +63,26 @@ exit "$_rc"
 """
 
 
+def _lib_module(name):
+    """Import a `hooks/lib` module in-process, for harness bookkeeping only.
+
+    The code *under test* is always a real subprocess. This is used so the
+    harness can record consent exactly the way the plugin does, instead of
+    hand-rolling a fingerprint that could drift from the real one.
+    """
+    if str(LIB) not in sys.path:
+        sys.path.insert(0, str(LIB))
+    return importlib.import_module(name)
+
+
+def _consent():
+    return _lib_module("consent")
+
+
+def _config():
+    return _lib_module("abacus_config")
+
+
 class Harness:
     """Handle a test uses to plant stub behaviour and run hook scripts."""
 
@@ -81,6 +102,12 @@ class Harness:
             p = self.stub_dir / name
             p.write_text(body)
             p.chmod(0o755)
+
+        # A just-installed plugin governs nothing until the settings are
+        # acknowledged (adr/014). The steady state of a real install is
+        # acknowledged, so that is the default posture here; the tests that
+        # exercise the unacknowledged path call revoke_acknowledgement().
+        self.acknowledge()
 
     # -- planting stub behaviour ------------------------------------------
     def set_bd(self, subcommand, stdout="", rc=0):
@@ -141,9 +168,36 @@ class Harness:
         (root / ".git" / "info").mkdir(parents=True, exist_ok=True)
         return root
 
-    def write_config(self, cfg):
+    def write_config(self, cfg, acknowledge=True):
+        """Plant a config, and by default re-acknowledge it.
+
+        The acknowledgement is fingerprinted over the *governing* settings, so
+        writing a config invalidates any earlier consent. Re-acknowledging keeps
+        the default posture of every test the steady state of a real install —
+        installed, agreed to, governing. Pass ``acknowledge=False`` to test the
+        unacknowledged path deliberately.
+        """
         self.state_dir.mkdir(parents=True, exist_ok=True)
         (self.state_dir / "config.json").write_text(json.dumps(cfg))
+        if acknowledge:
+            self.acknowledge()
+
+    def acknowledge(self):
+        """Record consent for whatever config is currently planted.
+
+        Uses the production code rather than a hand-written file, so a test can
+        never acknowledge in a way a real user could not.
+        """
+        _consent().acknowledge(
+            cfg=_config().load_config(path=str(self.state_dir / "config.json")),
+            path=str(self.state_dir / "acknowledged.json"),
+        )
+
+    def revoke_acknowledgement(self):
+        """Return to a just-installed state: nothing agreed to, nothing governed."""
+        target = self.state_dir / "acknowledged.json"
+        if target.exists():
+            target.unlink()
 
     def read_state(self, session_id):
         p = self.state_dir / f"session-{session_id}.json"

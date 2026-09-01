@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import beads  # noqa: E402
 import ccusage  # noqa: E402
+import consent  # noqa: E402
 import hook_io  # noqa: E402
 import state_store  # noqa: E402
 import abacus_config  # noqa: E402
@@ -192,6 +193,21 @@ def main():
 
     cwd = hook_io.payload_cwd(payload)
     cfg = abacus_config.load_config()
+
+    # Claude Code has no plugin-install hook, so this is the earliest surface
+    # after an install — and the last one before auto_init would write to a
+    # repository. Until the settings are acknowledged, say what abacus *would* do
+    # and do none of it (adr/014). The primer is skipped deliberately: it
+    # describes enforcement, and describing enforcement that is paused would
+    # spend tokens on a false statement.
+    if not consent.is_acknowledged(cfg):
+        session = hook_io.session_id(payload)
+        # Recorded so the UserPromptSubmit surface stays quiet: one ask per
+        # session, whichever hook gets there first.
+        state_store.update(session, {"consent_asked_at": abacus_time.now_iso()})
+        hook_io.additional_context(consent.notice(cfg), event="SessionStart")
+        return 0
+
     if not beads.has_workspace(cwd):
         # PreCompact is the middle of a session, not the start of a project, so
         # it never creates anything.

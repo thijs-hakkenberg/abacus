@@ -89,6 +89,12 @@ interfaces:
       sla:
         latency_p99_ms: 5000
         availability_pct: 99.0
+    - name: "consent-notice"
+      protocol: event
+      schema: "contracts/output/consent-notice.md — hookSpecificOutput.additionalContext from SessionStart/UserPromptSubmit, plus the $ABACUS_STATE_DIR/acknowledged.json record written only by hooks/scripts/acknowledge.py --accept. The precondition on every other interface here: until the record matches the fingerprint of the governing settings, no denial is emitted and nothing is written; see adr/014"
+      sla:
+        latency_p99_ms: 5000
+        availability_pct: 99.0
     - name: "ccusage-cli-query"
       protocol: subprocess
       schema: "npx -y ccusage@20.0.14 claude session --json --mode calculate — see hooks/lib/ccusage.py, adr/003"

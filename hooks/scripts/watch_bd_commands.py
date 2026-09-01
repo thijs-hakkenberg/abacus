@@ -46,6 +46,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import attribution  # noqa: E402
 import beads  # noqa: E402
 import ccusage  # noqa: E402
+import consent  # noqa: E402
 import hook_io  # noqa: E402
 import state_store  # noqa: E402
 import abacus_config  # noqa: E402
@@ -365,13 +366,20 @@ def main():
     if abacus_config.is_disabled():
         return 0
 
+    cfg = abacus_config.load_config()
+    # Metadata on an issue is a write to the user's store of record, so it waits
+    # for consent like everything else (adr/014). Nothing is buffered for later:
+    # the boundaries missed while unacknowledged are simply not attributed, and
+    # the audit pass reports them as gaps rather than inventing a figure.
+    if not consent.is_acknowledged(cfg):
+        return 0
+
     events = parse_events(command)
     if not events:
         return 0
 
     session = hook_io.session_id(payload)
     cwd = hook_io.payload_cwd(payload)
-    cfg = abacus_config.load_config()
 
     for kind, target in events:
         if kind == "claim":

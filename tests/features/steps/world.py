@@ -71,6 +71,12 @@ def world(harness):
         "env": {},
         "payload_extra": {},
         "raw_stdin": None,
+        # Whether a config write should re-record consent. True by default
+        # because the steady state of a real install is acknowledged; the consent
+        # scenarios turn it off, since from that point the scenario is describing
+        # the consent posture itself and a config write must not restore it
+        # (adr/014).
+        "auto_acknowledge": True,
         "result": None,
     }
 
@@ -86,7 +92,8 @@ def merge_config(world, changes):
             else:
                 base[key] = value
     _merge(world["config"], changes)
-    world["harness"].write_config(world["config"])
+    world["harness"].write_config(world["config"],
+                                  acknowledge=world.get("auto_acknowledge", True))
 
 
 def track_task(world, issue_id, cost, tokens=1000):
