@@ -7,6 +7,32 @@ versioning is tracked separately in each file under `contracts/`.
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-09-01
+
+### Fixed
+
+- **`auto_init` could never fire on a machine where `~/.beads` exists — which is any
+  machine that has run bd.** `beads.has_workspace()` walked upward to `/` and
+  returned true at the first directory containing a `.beads/`. bd keeps an
+  `eventsData/` sidecar in `~/.beads` that holds no database (`bd list` from `$HOME`
+  answers *no beads database found*), and that was enough to satisfy the walk. Since
+  `auto_init` fires only for a project that has none, a correctly configured
+  `auto_init.enabled: true` with `roots: ["~/projects"]` initialised nothing, ever,
+  and logged nothing — because nothing was attempted. Observed 2026-09-01 on a fresh
+  clone under `~/projects`: every one of adr/012's five rails passed when queried
+  directly; the code was simply unreachable.
+
+  `has_workspace()` now stops before `$HOME` and `/`, the same two directories
+  adr/012 rail 2 already refuses to *write* a workspace into, for the same stated
+  reason — one there captures every session beneath it. A `.beads/` at any other
+  level, including an intermediate ancestor of the cwd, is detected exactly as
+  before, and `$BEADS_DIR` still short-circuits the walk, so a home-level workspace
+  remains possible when it is asked for explicitly rather than inferred from bd's
+  own bookkeeping. See the adr/012 addendum.
+
+  Consequence worth naming: anyone who deliberately ran `bd init` in `$HOME` now
+  needs `$BEADS_DIR` set for the plugin to see it.
+
 ## [0.4.0] — 2026-08-31
 
 Adds an audit: something that can be pointed at a workspace and asked *is anything

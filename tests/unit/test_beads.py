@@ -176,6 +176,40 @@ print(json.dumps({"has": beads.has_workspace(%r)}))
     assert out["has"] is False
 
 
+def test_dot_beads_at_home_is_not_a_workspace(harness):
+    """`bd` puts an `eventsData/` sidecar in `~/.beads`, and it holds no database.
+
+    Observed on 2026-09-01: `~/.beads/eventsData/` existed, `bd list` from `$HOME`
+    answered "no beads database found", and yet the upward walk stopped there and
+    declared every repository on the machine tracked — which silently disabled
+    `auto_init` everywhere. adr/012 already refuses to *create* a workspace at
+    `$HOME` because it would capture every session beneath it; detection has to
+    honour the same boundary or the rail only holds in one direction.
+    """
+    (harness.home / ".beads" / "eventsData").mkdir(parents=True, exist_ok=True)
+    repo = harness.home / "projects" / "fresh-clone"
+    repo.mkdir(parents=True)
+    out = _probe(harness, """
+import beads, json
+print(json.dumps({"has": beads.has_workspace(%r)}))
+""" % str(repo))
+    assert out["has"] is False, "a .beads at $HOME must not make every repo below it tracked"
+
+
+def test_dot_beads_at_home_still_allows_a_real_workspace_below_it(harness):
+    """The $HOME stop must not swallow a genuine workspace on the way up."""
+    (harness.home / ".beads").mkdir(parents=True, exist_ok=True)
+    repo = harness.home / "projects" / "tracked"
+    (repo / ".beads").mkdir(parents=True)
+    nested = repo / "src" / "deep"
+    nested.mkdir(parents=True)
+    out = _probe(harness, """
+import beads, json
+print(json.dumps({"has": beads.has_workspace(%r)}))
+""" % str(nested))
+    assert out["has"] is True
+
+
 def test_beads_dir_env_var_counts_as_a_workspace(harness):
     bare = harness.tmp / "bare2"
     bare.mkdir()
