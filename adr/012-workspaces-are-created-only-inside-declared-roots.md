@@ -169,3 +169,55 @@ Rejected as the default while keeping it available as a value. `[]` is the corre
 expression of "every git repository" and some users will want it; making it the
 default means the first session in a cloned dependency writes to it. The narrow
 default is wrong for fewer people than the wide one.
+
+---
+
+## Addendum — 2026-09-01: the `$HOME` rail has to hold in both directions
+
+The five rails above all govern *writing*. Detection was left alone, and that
+asymmetry made `auto_init` unreachable on a real machine.
+
+`auto_init` fires only for a project that has no workspace, and "has no workspace"
+was `beads.has_workspace()`: walk upward, return true at the first directory
+containing a `.beads/`, stop only at `/`. bd puts an `eventsData/` sidecar in
+`~/.beads` for its own bookkeeping. That directory holds no database — `bd list`
+from `$HOME` answers *no beads database found* — but it satisfied the walk. So on
+2026-09-01, with `auto_init.enabled: true` and `roots: ["~/projects"]` correctly
+configured, a freshly cloned repository under `~/projects` was reported as already
+tracked, `_auto_init` was never called, and `SessionStart` exited having done
+nothing. Every rail above was satisfied; `_eligible_for_auto_init` returned true
+when asked directly. The feature was simply never reached.
+
+The failure was silent in the worst available way. Nothing logged, because nothing
+was attempted. And because `gate.non_beads_project` was set to `block`, the visible
+result was a repository that got no workspace *and* a nudge saying its edits would
+be blocked — enforcement advertised over a workspace that did not exist. The gate
+itself still failed open (rail 3: `bd list` exits non-zero, so allow), which is why
+this surfaced as a missing feature rather than as unworkable edits.
+
+**Decision.** `has_workspace()` now refuses to read a workspace out of `$HOME` or
+`/`, the same two directories rail 2 refuses to write one into. The reasoning is
+already in this ADR — *a workspace there would capture every session beneath it* —
+and it does not stop being true because the directory was found rather than created.
+A `.beads/` at any other level, including an intermediate ancestor of the cwd, is
+detected exactly as before.
+
+`$BEADS_DIR` still short-circuits the walk entirely, so this is not a ceiling on
+what a user may do: someone who genuinely wants a home-level workspace sets that
+variable and says so. What is no longer possible is inferring that intent from a
+directory bd created for itself.
+
+### Consequence, stated plainly
+
+A user who deliberately ran `bd init` in `$HOME` loses automatic detection and must
+set `$BEADS_DIR`. That is a real regression for a configuration this ADR already
+described as a failure mode, and it is accepted for that reason.
+
+### Alternative considered: require `.beads/` to look like a database
+
+Rejected. Checking for bd's internal files (a Dolt directory, a config) would
+distinguish the sidecar from a workspace precisely, and would also couple this
+plugin to a layout bd is free to change between versions — a coupling adr/001 exists
+to avoid, and one whose breakage would be silent in the same way this bug was. The
+`$HOME` stop is structural, mirrors a rail already in force, and needs no knowledge
+of bd's internals.

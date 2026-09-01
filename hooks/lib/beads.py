@@ -177,17 +177,46 @@ def close(issue_id, reason=None, cwd=None):
     return rc == 0
 
 
+def _walk_stops():
+    """Directories the upward walk refuses to read a workspace out of.
+
+    ``$HOME`` and ``/`` only, mirroring the rail adr/012 already applies to
+    *writing*: a workspace there would capture every session beneath it. bd
+    itself puts an ``eventsData/`` sidecar in ``~/.beads`` that holds no
+    database, so without this the mere presence of that sidecar declares every
+    repository on the machine tracked — and ``auto_init``, which fires only for
+    a project that has none, would never fire anywhere again.
+    """
+    stops = set()
+    for candidate in (os.environ.get("HOME"), "~", os.sep):
+        if not candidate:
+            continue
+        try:
+            stops.add(os.path.realpath(os.path.expanduser(candidate)))
+        except Exception:
+            continue
+    return stops
+
+
 def has_workspace(start_dir=None):
-    """True if `start_dir` (or an ancestor) is inside a beads workspace.
+    """True if `start_dir` (or an ancestor below `$HOME`) is a beads workspace.
 
     Walks upward because a hook's cwd is often a subdirectory of the repo root
-    where ``.beads/`` lives. ``$BEADS_DIR`` short-circuits the walk, since a user
-    who set it has explicitly pointed bd somewhere.
+    where ``.beads/`` lives, but stops short of ``$HOME`` and ``/`` — see
+    ``_walk_stops``. ``$BEADS_DIR`` short-circuits the whole walk, so a user who
+    genuinely wants a home-level workspace says so explicitly instead of having
+    it inferred from a directory bd created for its own bookkeeping.
     """
     if os.environ.get("BEADS_DIR"):
         return True
     path = os.path.abspath(start_dir or os.getcwd())
+    stops = _walk_stops()
     while True:
+        try:
+            if os.path.realpath(path) in stops:
+                return False
+        except Exception:
+            return False
         if os.path.isdir(os.path.join(path, ".beads")):
             return True
         parent = os.path.dirname(path)

@@ -104,7 +104,11 @@ repositories.** When on, five independent rails each default to *no* (adr/012):
 
 - the directory must be a **git root** (`.git` present in it, not in a parent);
 - **never `$HOME`, never `/`** — a workspace there would capture every session
-  beneath it;
+  beneath it. This rail runs in both directions: a `.beads/` found at `$HOME` is not
+  read as a workspace either, because bd keeps an `eventsData/` sidecar there that
+  holds no database, and treating it as one would report every repository on the
+  machine as already tracked (adr/012 addendum). Set `$BEADS_DIR` if you actually
+  want a home-level workspace;
 - it must be **inside `auto_init.roots`** (default `["~/projects"]`; `[]` means any
   git repository). Containment compares realpaths, so `~/projects-old` is not a
   child of `~/projects`;
@@ -282,7 +286,7 @@ Test/override env vars: `ABACUS_CONFIG`, `ABACUS_STATE_DIR`, `ABACUS_CCUSAGE_CMD
 ## Development
 
 ```bash
-python3 -m pytest tests/ -q     # 496 tests, ~4.5 min, no network
+python3 -m pytest tests/ -q     # 498 tests, ~3.5 min, no network
 ```
 
 Fully offline. `bd` and `npx` are stubbed on `PATH` and record their argv; `HOME`
