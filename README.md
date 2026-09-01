@@ -62,6 +62,36 @@ Only one marketplace can hold the name `abacus` at a time, so adding a checkout
 replaces the GitHub copy rather than sitting beside it. Re-add the shorthand to go
 back. Either way `/plugin marketplace update abacus` pulls the latest catalogue.
 
+## Nothing happens until you say so
+
+Installing abacus governs nothing. Until the settings that decide its behaviour have
+been acknowledged, it denies no tool call, creates no workspace, writes no metadata
+onto any issue and reaches no remote — it tells you what it *would* do, and waits
+(adr/014):
+
+```bash
+/abacus:acknowledge
+```
+
+The first session after an install prints a notice rendered from your own config, so
+it names the actual roots, the actual non-beads mode and whether a push is configured.
+It appears once per session until answered, and never when `ABACUS_DISABLE=1` — if you
+set the kill switch, you have already answered. Inspect first with `/abacus:status`;
+withdraw at any time with `/abacus:acknowledge revoke`.
+
+**Changing a setting that governs behaviour asks again.** The agreement is
+fingerprinted over exactly six keys — `gate.enabled`, `gate.non_beads_project`,
+`auto_init.enabled`, `auto_init.roots`, `auto_init.stealth`, `sync_on_session_end` —
+so widening `auto_init.roots` from `~/projects` to every repository on the machine
+pauses governance until the wider scope is agreed to separately. Bumping
+`ccusage_version` or toggling `statusline` does not: a notice that fires for cosmetic
+changes is a notice that gets dismissed unread, and then so is the one that matters.
+
+Two things this does *not* gate: `/abacus:audit fix` and `/abacus:task-start` keep
+working, because those are you acting rather than abacus acting unprompted. And
+everything here fails **closed** — a missing or unreadable record means inert, not
+governing.
+
 ## What it does, hook by hook
 
 | Event | Script | Timeout | Can block? |
@@ -133,6 +163,8 @@ session behaves exactly as if there were no workspace. Costs ~3s, once per proje
 - `/cost-report` — what recent tasks cost, read back from the issues
 - `/abacus:audit [fix]` — what is untracked or unattributed, and repair the
   metadata gaps
+- `/abacus:acknowledge [revoke]` — see what abacus would do, and switch
+  governance on or off
 
 Or use `bd` directly; the plugin watches for `bd update <id> --claim` and
 `bd close <id>` (and `--status in_progress` / `--status closed`) whichever way you
@@ -222,19 +254,25 @@ failed read is never reported as a clean workspace.
 missing or malformed file falls back to defaults entirely rather than breaking a
 session.
 
+Six of these keys **govern** — `gate.enabled`, `gate.non_beads_project`,
+`auto_init.enabled`, `auto_init.roots`, `auto_init.stealth` and `sync_on_session_end`,
+marked ⚖ below. Changing any of them withdraws governance until
+`/abacus:acknowledge` is run again. The rest are cosmetic and change nothing about
+what abacus is permitted to do, so they never re-ask.
+
 | Key | Default | |
 |---|---|---|
-| `gate.enabled` | `true` | |
-| `gate.non_beads_project` | `"warn"` | `warn` \| `off` \| `block`. Default is not `block`: a user-wide plugin must not make unrelated repos un-editable |
+| `gate.enabled` | `true` | ⚖ |
+| `gate.non_beads_project` | `"warn"` | ⚖ `warn` \| `off` \| `block`. Default is not `block`: a user-wide plugin must not make unrelated repos un-editable |
 | `gate.cache_ttl_s` | `3` | How long an *allow* is memoised. Denies are never cached (adr/008) |
 | `prime.mode` | `"compact"` | `compact` \| `full` \| `off`. `full` passes `bd prime`'s manual through verbatim, at ~10× the tokens (adr/009) |
-| `auto_init.enabled` | `false` | Create a beads workspace in a git project that has none. **The only setting that writes to your repositories**, so it is off until asked for (adr/012) |
-| `auto_init.roots` | `["~/projects"]` | Only these paths and their descendants. `[]` means every git repository; a value that is not a list of paths initialises *nothing* rather than everything |
-| `auto_init.stealth` | `true` | `bd init --stealth`, so `.beads/` goes into `.git/info/exclude` and can never reach a commit |
+| `auto_init.enabled` | `false` | ⚖ Create a beads workspace in a git project that has none. **The only setting that writes to your repositories**, so it is off until asked for (adr/012) |
+| `auto_init.roots` | `["~/projects"]` | ⚖ Only these paths and their descendants. `[]` means every git repository; a value that is not a list of paths initialises *nothing* rather than everything |
+| `auto_init.stealth` | `true` | ⚖ `bd init --stealth`, so `.beads/` goes into `.git/info/exclude` and can never reach a commit |
 | `ccusage_version` | `"ccusage@20.0.14"` | Pinned, never `@latest` — it carries the pricing table |
 | `ccusage_timeout_s` | `25` | |
 | `cache_ttl_s` | `30` | Snapshot cache. The closing read always bypasses it |
-| `sync_on_session_end` | `"off"` | `push` \| `sync` \| `off`. Opt-in: reaching a remote as a session closes is not a default |
+| `sync_on_session_end` | `"off"` | ⚖ `push` \| `sync` \| `off`. Opt-in: reaching a remote as a session closes is not a default |
 | `statusline` | `true` | The one-line `UserPromptSubmit` label |
 | `otel_enrichment` | `true` | |
 | `otel_events_path` | `~/.claude/logs/claude-code-events.jsonl` | |
@@ -286,7 +324,7 @@ Test/override env vars: `ABACUS_CONFIG`, `ABACUS_STATE_DIR`, `ABACUS_CCUSAGE_CMD
 ## Development
 
 ```bash
-python3 -m pytest tests/ -q     # 498 tests, ~3.5 min, no network
+python3 -m pytest tests/ -q     # 564 tests, ~4 min, no network
 ```
 
 Fully offline. `bd` and `npx` are stubbed on `PATH` and record their argv; `HOME`

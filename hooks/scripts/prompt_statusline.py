@@ -9,6 +9,12 @@ It is also silent by default. When nothing is claimed there is no line at all �
 the gate speaks up the moment an edit is attempted, so nagging on every prompt
 adds a token cost and an irritation to buy a warning the user is about to get
 anyway from the one place it can actually be acted on.
+
+It has one other job, and it is here because there is nowhere earlier. A plugin
+installed mid-session never sees a ``SessionStart``, so the next prompt the user
+types is the first moment abacus can say that it exists and ask whether it may
+act (adr/014). That ask happens once per session and then stops — an answer that
+is durable does not become more informative for being requested again.
 """
 
 import os
@@ -16,6 +22,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 
+import consent  # noqa: E402
 import hook_io  # noqa: E402
 import state_store  # noqa: E402
 import abacus_config  # noqa: E402
@@ -29,13 +36,29 @@ MAX_TITLE = 60
 def main():
     payload = hook_io.read_payload()
 
+    # The kill switch outranks everything, including asking to be switched on.
+    # Someone who set ABACUS_DISABLE=1 has already answered.
     if abacus_config.is_disabled():
         return 0
     cfg = abacus_config.load_config()
+
+    session = hook_io.session_id(payload)
+    state = state_store.load(session)
+
+    if not consent.is_acknowledged(cfg):
+        # The notice replaces the statusline rather than joining it: two
+        # competing messages prepended to one prompt is neither of them. And it
+        # is emitted whatever `statusline` says — that setting is about a label
+        # for work in progress, not about whether abacus may introduce itself.
+        if state.get("consent_asked_at"):
+            return 0
+        state_store.update(session, {"consent_asked_at": abacus_time.now_iso()})
+        hook_io.additional_context(consent.notice(cfg), event="UserPromptSubmit")
+        return 0
+
     if not cfg.get("statusline", True):
         return 0
 
-    state = state_store.load(hook_io.session_id(payload))
     issue_id = state.get("current_task")
     if not issue_id:
         return 0

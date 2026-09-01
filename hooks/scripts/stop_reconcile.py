@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import attribution  # noqa: E402
 import beads  # noqa: E402
+import consent  # noqa: E402
 import hook_io  # noqa: E402
 import state_store  # noqa: E402
 import abacus_config  # noqa: E402
@@ -37,6 +38,12 @@ def main():
     if payload.get("stop_hook_active"):
         return 0
     if abacus_config.is_disabled():
+        return 0
+
+    cfg = abacus_config.load_config()
+    # Repair is still a write, and this hook fires on every turn — it would be the
+    # first thing to breach the invariant if it were exempt (adr/014).
+    if not consent.is_acknowledged(cfg):
         return 0
 
     session = hook_io.session_id(payload)
@@ -65,7 +72,6 @@ def main():
     issue_status = str(issue.get("status") or "").lower()
     partial = issue_status != "closed"
 
-    cfg = abacus_config.load_config()
     attribution.finalise(session, current, cfg, partial=partial, cwd=cwd)
     attribution.clear_current(session)
     hook_io.log("reconciled %s at Stop (status=%s)" % (current, issue_status or "unknown"))

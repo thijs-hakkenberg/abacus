@@ -7,6 +7,60 @@ versioning is tracked separately in each file under `contracts/`.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-09-01
+
+Being installed is no longer agreement. Until the settings that govern abacus's
+behaviour have been acknowledged, it performs **no write and no denial** — it reads,
+it says what it would do, and it does nothing. See adr/014.
+
+### Added
+
+- **A consent precondition on every unprompted action.** Six hooks now check
+  `consent.is_acknowledged()` above anything that acts: the gate before any denial
+  (and before it spawns `bd` or `npx` at all), `session_start.py` before `auto_init`
+  writes into a repository, the watcher and the Stop reconciler before any
+  `--set-metadata`, and `session_end.py` before both the partial write and
+  `bd dolt push`. An unacknowledged install denies nothing and writes nothing.
+- **`/abacus:acknowledge`**, backed by `hooks/scripts/acknowledge.py`
+  (`--show` | `--accept` | `--revoke` | `--json`). `--show` is the default, so a bare
+  invocation records nothing: consent that can be given by mistyping is not consent.
+- **A notice at the two earliest surfaces after an install** — the first
+  `SessionStart`, and `UserPromptSubmit` for a plugin installed mid-session. It is
+  rendered from the live config, so it names the actual roots, the actual non-beads
+  mode and whether a remote would be reached. Emitted at most once per session, and
+  never when `ABACUS_DISABLE=1` — someone who set the kill switch has already
+  answered. `consent.notice()` returns `""` once acknowledged, so the steady-state
+  token cost of this feature is zero.
+- **Re-asks when the governing settings change, and only then.** The record carries a
+  sha256 fingerprint of six values: `gate.enabled`, `gate.non_beads_project`,
+  `auto_init.enabled`, `auto_init.roots`, `auto_init.stealth`,
+  `sync_on_session_end`. Widening `roots` from `~/projects` to `[]` pauses governance
+  until the wider scope is agreed to separately; bumping `ccusage_version` or toggling
+  `statusline` does not, because a notice that fires for cosmetic churn is one that
+  gets dismissed unread. `roots` compares as a sorted set — reordering grants nothing.
+- `contracts/output/consent-notice.md` (1.0.0), `adr/014`,
+  `features/consent-acknowledgement.feature` (21 scenarios), and a `consent-notice`
+  entry in `spec.manifest.yaml`'s `interfaces.outbound[]`.
+
+### Changed
+
+- **Consent gates *unprompted* action only.** `/abacus:audit fix` still repairs and
+  `/abacus:task-start` still claims — those are the user acting. Gating them would
+  make the notice self-defeating, since it names `/abacus:status` as the way to
+  inspect before agreeing.
+- This is the second path in the plugin that deliberately fails **closed**, after
+  `auto_init` (adr/012 rail 5). A missing, corrupt, non-object, fingerprint-less or
+  future-schema record all read as never acknowledged: "I cannot tell whether you
+  agreed" must never resolve to "yes".
+
+### Upgrade note
+
+**Existing installs stop governing until `/abacus:acknowledge` is run.** There is no
+record on disk yet, so the gate allows every edit and no attribution is written. This
+is deliberate — the alternative is inferring agreement from an upgrade nobody was
+asked about — but it does mean tracking silently pauses until the command is run once
+per machine.
+
 ## [0.4.1] — 2026-09-01
 
 ### Fixed

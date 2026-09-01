@@ -12,19 +12,35 @@ recorded argv, not on a return value: what reaches ``bd`` is the contract.
 """
 
 import json
+import time
 
 import pytest
 
 from conftest import session_payload
 
 
-def issue(issue_id, status="closed", metadata=None, started_at="2026-08-31T09:00:00Z",
-          closed_at="2026-08-31T10:00:00Z", title="tracked work"):
+def _hours_ago(hours):
+    """A bd-style timestamp `hours` in the past.
+
+    Relative, not a literal date: `stale_after_h` defaults to 24, so a fixture
+    pinned to a wall-clock day starts reporting a `stale-claim` gap once the
+    suite is run more than a day later — the default `issue()` is meant to be
+    *unremarkable*, and a fixture whose meaning changes overnight is not. The
+    tests that are genuinely about age pass an explicit date (`2026-01-01` for
+    the stale claim) and the ones about duration pass an explicit pair.
+    """
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - hours * 3600))
+
+
+def issue(issue_id, status="closed", metadata=None, started_at=None,
+          closed_at=None, title="tracked work"):
+    started_at = started_at or _hours_ago(2)
+    closed_at = closed_at or _hours_ago(1)
     body = {
         "id": issue_id,
         "title": title,
         "status": status,
-        "created_at": "2026-08-31T08:00:00Z",
+        "created_at": _hours_ago(3),
         "updated_at": closed_at,
         "started_at": started_at,
     }

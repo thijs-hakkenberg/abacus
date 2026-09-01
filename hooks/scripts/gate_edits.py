@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import beads  # noqa: E402
 import ccusage  # noqa: E402
+import consent  # noqa: E402
 import hook_io  # noqa: E402
 import state_store  # noqa: E402
 import abacus_config  # noqa: E402
@@ -158,6 +159,13 @@ def main():
         return 0
     cfg = abacus_config.load_config()
     if not abacus_config.gate_enabled(cfg):
+        return 0
+    # Being installed is not being agreed to. Until the governing settings are
+    # acknowledged this hook denies nothing and spawns nothing — no bd, no npx,
+    # no state write (adr/014). Placed above the workspace check so it also
+    # covers non_beads_project="block", which is the most invasive thing the
+    # gate can do and so the last thing that should arrive unannounced.
+    if not consent.is_acknowledged(cfg):
         return 0
 
     cwd = hook_io.payload_cwd(payload)

@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import attribution  # noqa: E402
 import beads  # noqa: E402
+import consent  # noqa: E402
 import hook_io  # noqa: E402
 import state_store  # noqa: E402
 import abacus_config  # noqa: E402
@@ -54,6 +55,14 @@ def main():
     session = hook_io.session_id(payload)
     cwd = hook_io.payload_cwd(payload)
     cfg = abacus_config.load_config()
+
+    # Of everything consent gates, `sync_on_session_end` is the only effect that
+    # leaves the machine and the only one the user cannot inspect afterwards — so
+    # the check sits above both the write and the push (adr/014). Pruning still
+    # runs below: the state directory is ours, and tidying it acts on nobody.
+    if not consent.is_acknowledged(cfg):
+        state_store.prune(int(cfg.get("state_max_age_days") or 14))
+        return 0
 
     state = state_store.load(session)
     current = state.get("current_task")
