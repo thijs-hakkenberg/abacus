@@ -61,7 +61,14 @@ figure never travels alone: an edge without its basis is a claim without its evi
 
 - **`declared`** — the commit message carries a `Beads-Task: <id>` trailer. Strongest,
   and **the only tier that can express true m:n**: a commit closing three tasks names
-  three. Needs no claim at all.
+  three. Needs no claim at all. It is git's own trailer parser that decides this, not
+  ours, which means the trailer must sit in the message's **final paragraph** —
+  `Beads-Task:` followed by a blank line and then a `Co-Authored-By:` block is not a
+  trailer at all, and git reports nothing. Found the hard way while verifying this ADR
+  end-to-end: the commit fell back to `observed`, which was the correct answer to the
+  message as written. Delegating the parse is still right — a regex of our own would
+  have "helpfully" accepted a malformed message and disagreed with `git interpret-trailers`
+  about what the message says.
 - **`observed`** — HEAD moved during a Bash tool call in this session while task X was
   claimed. Deterministic at the moment of capture.
 - **`inferred`** — the commit's timestamp falls inside a claim window. This is exactly

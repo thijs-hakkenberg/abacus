@@ -226,6 +226,10 @@ moved:
 | `declared` | git parsed a `Beads-Task: <id>` trailer out of your message | no |
 | `observed` | HEAD moved during this session while that task was claimed | yes |
 
+Git's own trailer parser decides what counts as `declared`, so the trailer has to be in
+the message's **last paragraph** — put a blank line and a `Co-Authored-By:` block after
+it and git reports no trailer, correctly.
+
 There is a third thing abacus could say — that a commit's timestamp falls inside a
 claim window — and it is **never written**. That is a guess, and guesses stay
 proposals in `/abacus:audit` (adr/013, adr/015).
