@@ -10,6 +10,11 @@ that finished an hour ago.
 Stop is the natural place to notice, because it fires at the end of every turn
 and the check is one ``bd list`` that the plugin is already making elsewhere.
 
+Since 0.6.0 it carries a second repair of the same shape: a HEAD sweep for commits
+the Bash watcher's verb list never matched (adr/015). Same reasoning — a boundary
+that happened outside our view — and the same asymmetry, in that Stop is the last
+surface that fires while the session id is still knowable.
+
 Two things this hook deliberately does *not* do. It does not finalise a task that
 is still in progress: Stop fires on every turn, so that would scatter a dozen
 partial figures across one afternoon's work. And it never blocks — the gate
@@ -24,6 +29,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import attribution  # noqa: E402
 import beads  # noqa: E402
+import commit_capture  # noqa: E402
 import consent  # noqa: E402
 import hook_io  # noqa: E402
 import state_store  # noqa: E402
@@ -47,6 +53,22 @@ def main():
         return 0
 
     session = hook_io.session_id(payload)
+    cwd = hook_io.payload_cwd(payload)
+
+    # Above the `current_task` return below, deliberately, and this is the whole
+    # reason the sweep lives at Stop rather than only in the watcher. A commit made
+    # by a shell script, a Makefile target or `gh pr merge` moves HEAD with nothing
+    # in the Bash command for the verb list to match, and a `Beads-Task:` trailer
+    # names its own tasks and needs no claim at all — so gating the sweep on
+    # `current_task` would make the *strongest* tier of evidence the only one a
+    # sweep could miss. Stop is also the last surface that fires while the session
+    # is still open, which is to say while its id is still knowable.
+    #
+    # It stays cheap in the quiet case: capture's first check is a filesystem walk
+    # for `.beads`, and HEAD not having moved costs two `rev-parse` calls and no
+    # write. See `commit_capture.capture`.
+    commit_capture.capture(session, cwd, cfg)
+
     state = state_store.load(session)
     current = state.get("current_task")
     if not current:
@@ -54,7 +76,6 @@ def main():
         # reason to spawn bd on the end of every turn.
         return 0
 
-    cwd = hook_io.payload_cwd(payload)
     status = beads.in_progress(cwd=cwd)
     if not status["available"]:
         # bd is missing, wedged, or the workspace vanished. "Cannot tell" is not

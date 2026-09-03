@@ -9,9 +9,17 @@ Two isolation guarantees hold for every test:
 
 - ``HOME`` points at a per-test tmp dir, so no test can read or write the
   developer's real ``~/.claude/`` or ``~/.beads/``.
-- ``PATH`` is prefixed with a stub bin dir, so ``bd`` and ``npx`` are fakes
-  that record their argv to ``calls.log``. Nothing here shells out to the real
-  ccusage (no network, no npx download) or mutates a real beads database.
+- ``PATH`` is prefixed with a stub bin dir, so ``bd``, ``npx`` and ``git`` are
+  fakes that record their argv to ``calls.log``. Nothing here shells out to the
+  real ccusage (no network, no npx download) or mutates a real beads database.
+
+``git`` is the one tool with a second, complementary mechanism.
+:func:`make_real_git_project` builds an actual repository with the local binary —
+no network, so the suite stays offline — because ``gitlog`` exists to parse git's
+output and a stub that echoes what the test already assumed proves nothing about
+the format. The two are kept apart deliberately: the stub serves the *hook*
+subprocesses, whose PATH it prefixes; the real repository serves the in-process
+``gitlog`` unit tests, which see the developer's own PATH and so the real binary.
 """
 
 import importlib
@@ -62,6 +70,26 @@ if [ -f "$STUB_DIR/npx.out" ]; then cat "$STUB_DIR/npx.out"; fi
 exit "$_rc"
 """
 
+# git needs a finer key than bd does: `rev-parse HEAD` and `rev-parse
+# --show-toplevel` are different questions, and a stub that answered both the same
+# way would let a hook confuse a sha with a path. So the slot is looked up as
+# "<subcommand>.<first-arg>" first, then "<subcommand>", then a bare git.out.
+# With no slot planted at all, git succeeds silently — the shape of a repository
+# where the question has no answer yet.
+_GIT_STUB = r"""#!/bin/sh
+printf '%s\n' "git $*" >> "$STUB_CALLS_LOG"
+_slot=""
+for _c in "$1.$2" "$1" ""; do
+    _n="git${_c:+.$_c}"
+    if [ -f "$STUB_DIR/$_n.out" ] || [ -f "$STUB_DIR/$_n.rc" ]; then _slot="$_n"; break; fi
+done
+if [ -z "$_slot" ]; then exit 0; fi
+if [ -f "$STUB_DIR/$_slot.sleep" ]; then sleep "$(cat "$STUB_DIR/$_slot.sleep")"; fi
+if [ -f "$STUB_DIR/$_slot.rc" ]; then _rc=$(cat "$STUB_DIR/$_slot.rc"); else _rc=0; fi
+if [ -f "$STUB_DIR/$_slot.out" ]; then cat "$STUB_DIR/$_slot.out"; fi
+exit "$_rc"
+"""
+
 
 def _lib_module(name):
     """Import a `hooks/lib` module in-process, for harness bookkeeping only.
@@ -98,7 +126,7 @@ class Harness:
         self.calls_log = tmp_path / "calls.log"
         self.calls_log.write_text("")
 
-        for name, body in (("bd", _BD_STUB), ("npx", _NPX_STUB)):
+        for name, body in (("bd", _BD_STUB), ("npx", _NPX_STUB), ("git", _GIT_STUB)):
             p = self.stub_dir / name
             p.write_text(body)
             p.chmod(0o755)
@@ -128,6 +156,25 @@ class Harness:
     def remove_npx(self):
         """Simulate `npx` absent from PATH — no cost source at all."""
         (self.stub_dir / "npx").unlink()
+
+    def set_git(self, spec, stdout="", rc=0):
+        """Plant canned stdout/exit-code for a git invocation.
+
+        `spec` is the slot the stub looks up: ``"rev-parse.HEAD"`` answers only
+        that question, ``"rev-list"`` answers every ``git rev-list``, and None
+        answers anything not otherwise planted.
+        """
+        name = "git" if spec is None else "git.%s" % spec
+        (self.stub_dir / ("%s.out" % name)).write_text(stdout)
+        (self.stub_dir / ("%s.rc" % name)).write_text(str(rc))
+
+    def set_git_hang(self, spec, seconds):
+        name = "git" if spec is None else "git.%s" % spec
+        (self.stub_dir / ("%s.sleep" % name)).write_text(str(seconds))
+
+    def remove_git(self):
+        """Simulate `git` absent from PATH."""
+        (self.stub_dir / "git").unlink()
 
     def set_ccusage_session(self, session_id, cost, tokens, **extra):
         """Plant a ccusage `session --json` payload the npx stub will echo."""
@@ -219,6 +266,9 @@ class Harness:
     def npx_calls(self):
         return [c for c in self.calls() if c.startswith("npx ")]
 
+    def git_calls(self):
+        return [c for c in self.calls() if c.startswith("git ")]
+
     # -- running the real hook scripts ------------------------------------
     def env(self, **overrides):
         env = dict(os.environ)
@@ -295,6 +345,103 @@ class HookResult:
 @pytest.fixture
 def harness(tmp_path, monkeypatch):
     return Harness(tmp_path, monkeypatch)
+
+
+# ── a real git repository, built with the local binary ──────────────────────
+# `gitlog` exists to parse git's output, so its unit tests use a real repository:
+# a stub echoing the format the test already assumed would pass whatever git
+# actually does. Offline all the same — `git init` and `git commit` touch no
+# network — but the local config is neutralised so a developer's `commit.gpgsign`
+# or a template directory cannot change the outcome, and no hook is ever run.
+
+_GIT_ISOLATION = {
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_SYSTEM": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_AUTHOR_NAME": "abacus tests",
+    "GIT_AUTHOR_EMAIL": "tests@example.invalid",
+    "GIT_COMMITTER_NAME": "abacus tests",
+    "GIT_COMMITTER_EMAIL": "tests@example.invalid",
+    "GIT_TERMINAL_PROMPT": "0",
+}
+
+needs_git = pytest.mark.skipif(
+    shutil.which("git") is None,
+    reason="a real git binary is the one external tool these tests use; the rest "
+           "of the suite stubs it",
+)
+
+
+class RealGitRepo:
+    """An actual repository under tmp_path, with a helper to add commits."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self.path.mkdir(parents=True, exist_ok=True)
+        self.run("init", "-q")
+
+    def run(self, *args, **kw):
+        env = dict(os.environ)
+        env.update(_GIT_ISOLATION)
+        env.update(kw.pop("env", {}))
+        proc = subprocess.run(
+            ["git", "-c", "commit.gpgsign=false", *args],
+            cwd=str(self.path),
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=30,
+            env=env,
+            **kw,
+        )
+        assert proc.returncode == 0, "git %s failed: %s" % (args, proc.stderr)
+        return proc.stdout
+
+    @staticmethod
+    def _dated(when):
+        if when is None:
+            return {}
+        stamp = "@%d +0000" % int(when)
+        return {"GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp}
+
+    def commit(self, subject, trailers=None, when=None):
+        """Add one commit and return its full sha.
+
+        `trailers` is a raw final paragraph (``"Beads-Task: a, b"``); `when` an
+        epoch second, so a test can place a commit before or after a claim
+        without sleeping.
+        """
+        marker = self.path / ("f-%s.txt" % abs(hash(subject)))
+        marker.write_text(subject)
+        self.run("add", "-A")
+        args = ["commit", "-q", "--no-verify", "-m", subject]
+        if trailers:
+            args += ["-m", trailers]
+        self.run(*args, env=self._dated(when))
+        return self.run("rev-parse", "HEAD").strip()
+
+    def merge_commit(self, subject, when=None):
+        """A real two-parent merge, which `--no-merges` would hide.
+
+        A squash- or merge-commit *is* the work when a branch lands, so the
+        capture path must see it; this builds the shape that proves it does.
+        """
+        branch = "side-%s" % abs(hash(subject))
+        self.run("checkout", "-q", "-b", branch)
+        self.commit("%s (branch side)" % subject, when=when)
+        self.run("checkout", "-q", "-")
+        self.run("merge", "-q", "--no-ff", "-m", subject, branch,
+                 env=self._dated(when))
+        return self.run("rev-parse", "HEAD").strip()
+
+
+def make_real_git_project(path):
+    return RealGitRepo(path)
+
+
+@pytest.fixture
+def git_repo(tmp_path):
+    return make_real_git_project(tmp_path / "realrepo")
 
 
 @pytest.fixture

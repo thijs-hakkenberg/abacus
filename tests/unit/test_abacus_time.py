@@ -77,3 +77,16 @@ def test_a_negative_span_is_clamped_to_zero(abacus_time):
 ])
 def test_an_unparsable_endpoint_yields_zero_minutes(abacus_time, start, end):
     assert abacus_time.minutes_between(start, end) == 0
+
+
+def test_iso_from_epoch_round_trips_through_parse_iso(abacus_time):
+    """The two must agree, because commit edges write one and read the other."""
+    text = abacus_time.iso_from_epoch(1_700_000_600)
+    assert text == "2023-11-14T22:23:20Z"
+    assert abacus_time.parse_iso(text) == 1_700_000_600
+
+
+@pytest.mark.parametrize("value", [None, "", "garbage", [], 10 ** 30])
+def test_iso_from_epoch_is_none_for_anything_it_cannot_convert(abacus_time, value):
+    """None, never a fallback timestamp: 1970-01-01 would read as a measurement."""
+    assert abacus_time.iso_from_epoch(value) is None

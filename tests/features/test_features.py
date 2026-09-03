@@ -14,6 +14,7 @@ from pytest_bdd import scenarios
 
 from audit_steps import *  # noqa: F401,F403
 from auto_init_steps import *  # noqa: F401,F403
+from commit_steps import *  # noqa: F401,F403
 from common_steps import *  # noqa: F401,F403
 from consent_steps import *  # noqa: F401,F403
 from primer_steps import *  # noqa: F401,F403
@@ -29,3 +30,4 @@ scenarios("cost-estimate-labelling.feature")
 scenarios("workspace-auto-init.feature")
 scenarios("task-audit.feature")
 scenarios("consent-acknowledgement.feature")
+scenarios("commit-capture.feature")

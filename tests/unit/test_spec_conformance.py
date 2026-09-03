@@ -206,6 +206,103 @@ def test_adr_numbers_are_unique_and_gapless():
     )
 
 
+# ── Pillar 1a: the analysis companions ──────────────────────────────────────
+#
+# `adr/analysis/NNN-<same-slug>.md` archives the weighing an ADR compresses away:
+# the criteria stated before the options, the option that was eliminated and by
+# which argument, the calibrated confidence, the premortem. adr/007's addendum
+# records why it is a subdivision of the "why" pillar rather than a fifth one.
+#
+# The hazard the three assertions below exist for is mechanical: `_adrs()` globs
+# `adr/*.md` non-recursively and the loose-markdown check globs the root only, so
+# without these the companions would be *entirely unchecked* — which is the thing
+# this repo calls documentation pretending to be a test.
+#
+# What they deliberately do not assert, in the spirit of adr/007's own admission:
+# that an analysis is sound, or still true. One can be wholly superseded and the
+# suite stays green. They check only that it is present, well-formed and reachable.
+
+ANALYSIS_SECTIONS = (
+    "## Frame",
+    "## Criteria",
+    "## Options",
+    "## Assessment",
+    "## Sensitivity and Trade-off Points",
+    "## Evidence Certainty",
+    "## Assumptions and Falsifiers",
+    "## Decision and Warrant",
+    "## Consequences",
+    "## Y-statements",
+)
+
+
+def _analyses():
+    return sorted((REPO_ROOT / "adr" / "analysis").glob("*.md"))
+
+
+def test_the_analysis_companions_are_populated():
+    """At least one, or the directory is a promise rather than a practice."""
+    assert _analyses(), (
+        "adr/analysis/ holds no companion; the weighing behind at least the most "
+        "recent decision should be archived (adr/007 addendum)"
+    )
+
+
+@pytest.mark.parametrize("path", _analyses(), ids=lambda p: p.name)
+def test_every_analysis_belongs_to_an_adr_that_exists(path):
+    """One-directional on purpose.
+
+    An ADR without a companion is legal — adr/001–014 predate the practice, and
+    reconstructing their weighing now would be invention, which is the error
+    adr/013 refuses. An analysis without an ADR is not legal: it is reasoning for
+    a decision nobody can find.
+    """
+    assert ADR_FILENAME.match(path.name), (
+        "%s must follow the same NNN-lowercase-title.md convention as the ADR it "
+        "belongs to" % path.name
+    )
+    siblings = list((REPO_ROOT / "adr").glob("%s-*.md" % path.name[:3]))
+    assert siblings, "adr/analysis/%s is an orphan: there is no adr/%s-*.md" % (
+        path.name, path.name[:3],
+    )
+    assert path.name in {p.name for p in siblings}, (
+        "adr/analysis/%s must share its slug with %s, so the pair is obvious from "
+        "the filename alone" % (path.name, siblings[0].name)
+    )
+
+
+@pytest.mark.parametrize("path", _analyses(), ids=lambda p: p.name)
+def test_every_analysis_carries_the_composite_scaffold(path):
+    """The scaffold is the reusable part.
+
+    Stated criteria before options is what makes the reasoning auditable rather
+    than a rationalisation written after the fact; the premortem and the falsifiers
+    are what make it reviewable when it turns out wrong.
+    """
+    text = path.read_text(encoding="utf-8")
+    for section in ANALYSIS_SECTIONS:
+        assert section in text, "%s has no %r section (Composite Scaffold)" % (
+            path.name, section,
+        )
+
+
+@pytest.mark.parametrize("path", _analyses(), ids=lambda p: p.name)
+def test_the_parent_adr_links_to_its_analysis(path):
+    """Without this, a reader of the ADR never learns the reasoning exists.
+
+    An unreachable archive is the same as no archive, and this is the assertion
+    most likely to catch a real omission: writing the companion and forgetting the
+    link is a far easier mistake than writing neither.
+    """
+    parent = REPO_ROOT / "adr" / path.name
+    assert parent.is_file(), "no parent ADR at adr/%s" % path.name
+    text = parent.read_text(encoding="utf-8")
+    assert "analysis/%s" % path.name in text, (
+        "adr/%s does not link to analysis/%s; the weighing is archived but "
+        "unreachable from the decision it explains" % (path.name, path.name)
+    )
+
+
 # ── Pillar 3: the bounded-context canvas ────────────────────────────────────
 
 # The ddd-crew Bounded Context Canvas sections, in its order. Extra sections are allowed —

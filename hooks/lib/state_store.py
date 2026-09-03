@@ -5,8 +5,17 @@ This is deliberately NOT a task database — the beads DB is the store of record
 for what work exists and what is in progress (adr/001). All this holds is the
 bookkeeping needed to turn two ccusage readings into one task's cost:
 
-    {"session_id", "current_task", "claimed_at", "snapshot": {...},
-     "tool_calls", "beads_plugin_present", ...}
+    {"session_id", "current_task", "current_title", "claimed_at",
+     "snapshot": {...}, "snapshot_source", "started_at",
+     "head_watermarks": {"<repo-root>": "<sha>"},
+     "gate_allow", "consent_asked_at"}
+
+Every one of those is reconstructible or disposable, which is the membership rule.
+``head_watermarks`` is the newest and the clearest illustration: losing it costs at
+most one boundary's commit edges, because the next hook to look re-seeds it and
+writes nothing (adr/015). ``gate_allow`` is a 3-second cache and
+``consent_asked_at`` only suppresses a duplicate notice. Nothing here is consulted
+to answer *what work exists* — that is beads, always.
 
 One JSON file per session under ``$ABACUS_STATE_DIR`` (default
 ``~/.claude/abacus/``), because sessions are independent and a file

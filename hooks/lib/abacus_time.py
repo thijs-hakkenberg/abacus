@@ -48,6 +48,19 @@ def parse_iso(text):
     return calendar.timegm(parsed) + frac
 
 
+def iso_from_epoch(epoch):
+    """Epoch seconds -> ``YYYY-MM-DDTHH:MM:SSZ``, or None.
+
+    The inverse of :func:`parse_iso`, and the only one — git reports ``%ct``
+    seconds and commit edges store an epoch, so two places need this conversion
+    and neither should own its own copy of it.
+    """
+    try:
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(epoch)))
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
+
+
 def minutes_between(start_iso, end_iso):
     """Whole minutes from `start_iso` to `end_iso`; 0 if either is unparsable."""
     start = parse_iso(start_iso)

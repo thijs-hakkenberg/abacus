@@ -34,6 +34,14 @@ session never claimed writes no cost figure — the spend accrued under whatever
 *is* claimed, and charging it to an unrelated issue because it happened to be
 closed here would be worse than recording nothing.
 
+It also watches for a third kind of event, added in 0.6.0: a command that could
+have **moved HEAD**. No Claude Code hook fires on a commit, and the sha is not
+reliably in the command's stdout, so capture asks git instead — comparing HEAD
+against a watermark recorded earlier in the session (adr/015). The verb list that
+triggers the check is a cheap trigger and *not* the correctness mechanism; the
+watermark is, which is why a verb this file has never heard of costs at most one
+unrecorded boundary and is picked up by the Stop/SessionEnd sweep.
+
 Never blocks, never emits a permission decision, always exits 0.
 """
 
@@ -46,6 +54,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import attribution  # noqa: E402
 import beads  # noqa: E402
 import ccusage  # noqa: E402
+import commit_capture  # noqa: E402
 import consent  # noqa: E402
 import hook_io  # noqa: E402
 import state_store  # noqa: E402
@@ -58,6 +67,29 @@ import abacus_time  # noqa: E402
 READ_ONLY_SUBCOMMANDS = frozenset((
     "list", "show", "ready", "prime", "blocked", "stats", "search", "export",
     "dep", "deps", "diag", "version", "help", "config", "quickstart",
+))
+
+# git verbs that can add commits. An **allowlist**, the opposite polarity to
+# READ_ONLY_SUBCOMMANDS above, and deliberately: an unfamiliar bd subcommand
+# falling through to no-match costs nothing, whereas an unfamiliar git verb
+# falling through to "check HEAD" would spawn a subprocess for every `git
+# status`. The cost of the allowlist being short is one unrecorded boundary,
+# which the Stop/SessionEnd sweep collects.
+GIT_MOVE_VERBS = frozenset((
+    "commit", "merge", "rebase", "cherry-pick", "revert", "am", "apply", "pull",
+))
+
+# git verbs that move HEAD **without creating anything**. Re-seed the watermark
+# and write nothing: the difference between two branches is not work this task
+# did, and attributing it would charge the claim for every commit that happens to
+# live on the branch being switched to.
+GIT_RESEED_VERBS = frozenset(("checkout", "switch", "reset"))
+
+# git's own options that take a separate value, so `git -C sub commit` finds the
+# verb rather than reading `sub` as one. The `--flag=value` spellings need no
+# entry: they start with a dash and are skipped as flags.
+_GIT_VALUED_GLOBALS = frozenset((
+    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
 ))
 
 # Newline is deliberately absent: `whitespace_split` makes shlex classify it as
@@ -181,6 +213,31 @@ def _is_bd(token):
     return os.path.basename(token) == "bd"
 
 
+def _is_git(token):
+    """True if `token` invokes git — bare, or by an absolute/relative path.
+
+    Basename, exactly as ``_is_bd``, so ``/usr/bin/git`` matches while
+    ``gitleaks`` and ``git-lfs`` do not.
+    """
+    return os.path.basename(token) == "git"
+
+
+def _git_verb(tokens):
+    """The subcommand in a git invocation, skipping git's own global options."""
+    skip_next = False
+    for token in tokens[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in _GIT_VALUED_GLOBALS:
+            skip_next = True
+            continue
+        if token.startswith("-"):
+            continue
+        return token
+    return None
+
+
 def _strip_env_prefix(tokens):
     """Drop leading ``VAR=value`` assignments.
 
@@ -250,19 +307,36 @@ def _all_positionals(tokens):
 def parse_events(command):
     """Task boundaries in `command`, in execution order.
 
-    Each is ``("claim", id_or_None)`` or ``("close", [ids])``. Order matters:
+    Each is ``("claim", id_or_None)``, ``("close", [ids])``, ``("git-move",
+    None)`` or ``("git-reseed", None)``. Order matters, and in two ways now:
     ``bd update x --claim && bd close x`` must take the baseline before diffing
-    against it, or the close sees no baseline at all.
+    against it, and ``git commit && bd close x`` must capture the commit *before*
+    the close clears the current task, or there is no task left to attribute it
+    to.
 
     Note that ``bd update --status closed`` is a close and ``--status
     in_progress`` is a claim. Both were verified against bd 1.1.2 to have the
     same effect as the dedicated subcommands, and agents do use both spellings —
     watching only ``bd close`` loses those tasks' cost silently.
+
+    The git branch inherits the whole tokenising apparatus above for free: the
+    ``&&`` segmentation, the env-prefix stripping and — load-bearing — the
+    heredoc-body skipping, so a runbook documenting ``git commit`` inside a
+    heredoc stays data rather than becoming a boundary.
     """
     events = []
     for raw_tokens in _segments(command):
         tokens = _strip_env_prefix(raw_tokens)
-        if len(tokens) < 2 or not _is_bd(tokens[0]):
+        if len(tokens) < 2:
+            continue
+        if _is_git(tokens[0]):
+            verb = _git_verb(tokens)
+            if verb in GIT_MOVE_VERBS:
+                events.append(("git-move", None))
+            elif verb in GIT_RESEED_VERBS:
+                events.append(("git-reseed", None))
+            continue
+        if not _is_bd(tokens[0]):
             continue
         sub, rest = tokens[1], tokens[2:]
         if sub in READ_ONLY_SUBCOMMANDS:
@@ -358,9 +432,12 @@ def main():
         return 0
 
     command = str((payload.get("tool_input") or {}).get("command") or "")
-    # Cheap prefilter before anything else: most Bash calls in a session are not
-    # bd, and they must cost a string scan rather than a subprocess.
-    if "bd" not in command:
+    # Cheap prefilter before anything else: most Bash calls in a session are
+    # neither bd nor git, and they must cost a string scan rather than a
+    # subprocess. Widening it to git roughly doubles what reaches parse_events,
+    # which is still pure string work — no subprocess is spawned until a segment
+    # has actually been recognised as a boundary.
+    if "bd" not in command and "git" not in command:
         return 0
 
     if abacus_config.is_disabled():
@@ -381,11 +458,18 @@ def main():
     session = hook_io.session_id(payload)
     cwd = hook_io.payload_cwd(payload)
 
+    # In order, never collapsed by kind: `git commit -m x && bd close y` has to
+    # capture before the close clears the current task. Repeated git moves in one
+    # command are harmless because the handler is idempotent — the second finds
+    # the watermark already at HEAD.
     for kind, target in events:
         if kind == "claim":
             _handle_claim(session, target, cwd, cfg)
-        else:
+        elif kind == "close":
             _handle_close(session, target, cwd, cfg)
+        else:
+            commit_capture.capture(session, cwd, cfg,
+                                   reseed=(kind == "git-reseed"))
     return 0
 
 
