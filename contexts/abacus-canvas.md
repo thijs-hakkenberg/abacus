@@ -90,6 +90,7 @@ construction rather than by discipline.
 | deny decision | response | Claude Code runtime | Conformist (CF) — must match the `hookSpecificOutput.permissionDecision` shape (`contracts/output/permission-decision.md`) |
 | injected context (primer, statusline) | response | Claude Code runtime / the model's context | Conformist (CF) — `hookSpecificOutput.additionalContext` |
 | `bd update <id> --set-metadata abacus_*=…` | command | local `bd` CLI (embedded Dolt) | Customer/Supplier (C/S) — depends on `--set-metadata` merging rather than replacing, and on it working against a closed issue (`contracts/output/bd-metadata-write.md`) |
+| `git rev-parse` / `git log` | query | local `git` CLI | Conformist (CF) — read-only, and asked rather than parsed out of a command's stdout; depends on the `%(trailers:key=…)` atom and on `rev-list`-style ranges including merges (adr/015) |
 | `bd dolt push` / `bd dolt sync` | command | beads remote, via `bd` | Customer/Supplier (C/S) — opt-in, best-effort, never retried |
 | stderr diagnostics | event | Terminal / user | Open Host Service (OHS) — plain text prefixed `[abacus]`, no consumer contract |
 
@@ -112,6 +113,13 @@ construction rather than by discipline.
 | Gate cache | A 3s memo of a previous *allow*, keyed on session **and** workspace. One-sided on purpose: a stale allow smears attribution by seconds, a stale deny would refuse an edit after the user correctly claimed (adr/008) |
 | Lazy snapshot | The gate's repair path — when it allows an edit for a task it has no baseline for, it takes one now. Covers claims the watcher's tokeniser did not see |
 | Compact primer | The ~450-character orientation injected at SessionStart, instead of `bd prime`'s ~1,200 tokens of workflow manual (adr/009) |
+| Commit edge | One `abacus_commit_<sha12>` key on a task issue, recording that a commit belongs to that task. The relation is m:n — one commit can complete several tasks, one task spans many commits — and one key is one edge, so one `--unset-metadata` withdraws exactly one (adr/015) |
+| Basis | The evidence an edge rests on, and the first field of its value. Mirrors `abacus_cost_basis`: an edge without its basis is a claim without its evidence |
+| Declared | A `Beads-Task: <id>` trailer git itself parsed out of the commit message. The strongest basis, the only one that expresses true m:n, and the only one that needs no claim |
+| Observed | HEAD moved during this session while that task was claimed. Means "this commit landed while this task was claimed" and nothing stronger — it cannot distinguish work in a commit from work alongside it |
+| Inferred | The commit's timestamp falls inside a claim window. Ambiguous, so **never written**: it stays a proposal in an audit report (adr/013, adr/015) |
+| Watermark | The HEAD sha this session last saw for a repository, held in disposable session state. Capture diffs against it. It, not the list of git verbs the watcher recognises, is what makes capture correct |
+| Seed | Recording a watermark and attributing nothing — on first sight of a repository, and on `checkout`/`switch`/`reset`. Without it the first git command of a session would hang the whole history on whatever task is claimed |
 
 ## Business Decisions
 
@@ -141,6 +149,18 @@ construction rather than by discipline.
   floating it silently re-prices historical tasks.
 - `bd dolt push` is opt-in (`sync_on_session_end`, default `off`). Reaching a
   remote on the user's behalf as a session closes is not a default.
+- Only witnessed edges are written. `declared` and `observed` are recorded;
+  `inferred` never is, which is how adr/015 extends adr/013 rather than reversing it.
+- Nothing is written into the user's repository to capture commits — no git hook, no
+  config value, no trailer. A git hook would also run with no Claude environment and
+  so no session id, which is the one thing capture exists to record.
+- Cost per commit is derived at read time and never stored, so the apportionment can
+  change with no data to migrate. Equal share within the task, and the denominator is
+  always published beside the share — per-commit costs do not sum to a repository
+  total under m:n.
+- A commit is recorded once, not once per boundary. The watermark advances even when
+  a write failed: losing one boundary's edges is a smaller failure than a growing
+  range that eventually trips the cap and captures nothing ever again.
 - The plugin owns no store of its own. Session-level cost reporting is a separate
   concern with separate tools; this context owns task-level attribution only, and
   writes it where beads already keeps the task.

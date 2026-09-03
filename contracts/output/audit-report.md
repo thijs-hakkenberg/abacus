@@ -58,6 +58,19 @@ one JSON document to stdout.
 Gaps are ordered by kind — `unclaimed` first, because it is the only finding that
 blocks the user right now — then by issue id.
 
+### What `untracked-commits` means, since v0.6.0
+
+A commit is untracked when it falls outside every claim window **and** no issue in the
+workspace carries an `abacus_commit_<sha12>` edge for it (adr/015). The second clause
+narrows the set: a commit with a written edge was tracked by a mechanism the window
+arithmetic cannot see, so reporting it would be a false positive against evidence the
+plugin itself recorded.
+
+This is a **narrowing only**. No new `kind` appears, nothing that was `fixable`
+becomes unfixable or the reverse, and `fixable` on this kind is still hardcoded
+`false` — the repair is `bd create`, which is not reversible bookkeeping. A consumer
+that never looked at edges sees strictly fewer gaps of one existing kind.
+
 ### The invariant a consumer must respect
 
 **`ok: false` omits `gaps` entirely.** Not `gaps: []`. A workspace that could not be
@@ -108,7 +121,10 @@ bookkeeping). Both are judgements about intent and belong to the agent or the us
 
 ## SemVer
 
-- **Contract version:** 1.0.0
+- **Contract version:** 1.1.0 — the `untracked-commits` definition narrowed to
+  exclude commits carrying a written edge (adr/015). Minor rather than major: the
+  gap set shrinks, no `kind` changed, and nothing became fixable that was not.
+  Widening it, or making `--fix` write this kind, would be **major**.
 - **Migration:** none yet. `kind` is the field a consumer branches on; an unknown
   `kind` should be reported to the user verbatim rather than dropped.
 - **Deprecation policy:** adding a key, or a new `kind`, is a **minor** bump —

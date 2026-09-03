@@ -16,6 +16,7 @@ business_capability: "AI Work Attribution & Cost Transparency"
 
 artefacts:
   adrs: adr/
+  adr_analyses: adr/analysis/
   features: features/
   contexts: contexts/
   contracts: contracts/
@@ -30,7 +31,7 @@ interfaces:
         availability_pct: 100.0
     - name: "post-tool-use-bash-watcher"
       protocol: event
-      schema: "contracts/input/post-tool-use-bash.md — hooks/scripts/watch_bd_commands.py; tokenises the command with shlex rather than regex-matching it, see adr/010"
+      schema: "contracts/input/post-tool-use-bash.md — hooks/scripts/watch_bd_commands.py; tokenises the command with shlex rather than regex-matching it, see adr/010; also the cheap trigger for commit capture, whose correctness rests on the HEAD watermark rather than on this verb list, see adr/015"
       sla:
         latency_p99_ms: 30000
         availability_pct: 99.0
@@ -125,3 +126,5 @@ dependencies:
     contract: "contracts/output/bd-metadata-write.md"
   - name: "git (.git marker and .git/info/exclude) — the project boundary auto-init requires and the file --stealth writes to"
     contract: "adr/012-workspaces-are-created-only-inside-declared-roots.md"
+  - name: "git (rev-parse, log with a trailer atom) — read-only: which commits a task produced, and nothing written into the user's repository"
+    contract: "adr/015-commit-edges-are-observed-not-inferred.md"

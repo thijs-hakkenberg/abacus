@@ -138,3 +138,38 @@ the valuable content here is exactly what the code cannot say: the alternative t
 was rejected, the measured figure that settled an argument, the failure mode a
 constraint exists to prevent. A generator would have produced none of the content
 in these ADRs that has since prevented a mistake.
+
+## Addendum: 2026-09-03 — the "why" pillar gains an `analysis/` subdivision
+
+An extension, not a reversal, but recorded as an addendum because the mechanism is the
+same one this ADR prescribes for a reversal.
+
+**What changed.** `adr/analysis/NNN-<same-slug>.md` may now hold the full weighing behind
+an ADR: the criteria stated before the options, the assessment matrix, the option that was
+eliminated and by which argument, calibrated evidence certainty, the premortem and the
+falsifiers, and a closing Y-statement. First instance: adr/015 and its companion.
+
+**Why it is a subdivision rather than a fifth pillar.** This ADR says a design note goes
+in an ADR or a contract, or it does not get written — so a top-level `decisions/`
+directory would contradict it directly. The reasoning behind a decision is not a fifth
+kind of question; it is the same question ("why is it like this?") at a resolution
+`## Alternatives Considered` cannot hold. `## Alternatives Considered` compresses each
+rejected option to a paragraph, which is right for a reader deciding whether to reopen a
+decision and wrong for one who has decided to. **The four-pillar count is unchanged.**
+
+**Why it needed new assertions.** `_adrs()` globs `adr/*.md` non-recursively and the
+loose-markdown check globs the root only, so companion files would otherwise have been
+**entirely unchecked** — which is what this repo calls documentation pretending to be a
+test. Three assertions were added, all of the "agreement between artefacts" class the rest
+of the suite is built from: the filename convention plus **no orphan** (an `NNN` with no
+`adr/NNN-*.md`); the scaffold sections are present; and **the parent ADR links to its
+companion**, since an unreachable archive is the same as no archive.
+
+Assertion 1 is **one-directional** on purpose: an ADR without a companion is legal, an
+analysis without an ADR is not. Backfilling companions for adr/001–014 is explicitly out of
+scope — those analyses were not recorded at the time, and reconstructing them now would be
+invention, which is the error adr/013 refuses.
+
+In the spirit of this ADR's own Negative consequence: the new assertions check that an
+analysis is present, well-formed and reachable. They do not check that it is sound or
+still true. One can be wholly superseded and the suite stays green.
