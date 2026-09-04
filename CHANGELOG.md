@@ -7,6 +7,102 @@ versioning is tracked separately in each file under `contracts/`.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-09-03
+
+Commits enter the model. abacus could already say what a task cost; it could not say
+which commits that task produced, in which session, or what any single commit cost.
+The relation is genuinely m:n — one commit can complete several tasks, one task spans
+many commits — and it was stored nowhere. See adr/015, and
+`adr/analysis/015-commit-edges-are-observed-not-inferred.md` for the weighing behind it.
+
+Nothing is written into your repository to make this work: no git hook, no
+`core.hooksPath`, no trailer added to your messages. A git hook would also run with no
+Claude environment and therefore no session id — the one thing capture exists to record.
+
+### Added
+
+- **Task↔commit edges on the beads issue**, one metadata key per commit:
+  `abacus_commit_<sha12>` = `<basis>:<session-id>:<commit-epoch>`. One key per edge, so
+  withdrawing one is one `bd update --unset-metadata` and does exactly one edge's worth
+  of damage. Verified against bd 1.1.2 at 200 keys on a single issue
+  (`tests/integration/test_bd_metadata_ceiling.py`, opt-in via `ABACUS_REAL_BD_TESTS=1`).
+- **Two bases, both witnessed.** `declared` — git itself parsed a `Beads-Task: <id>`
+  trailer out of the message, the only tier that expresses true m:n and the only one
+  needing no claim. `observed` — HEAD moved during this session while that task was
+  claimed. A third tier, `inferred` (a timestamp inside a claim window), is **never
+  written**: it stays what it already was, a proposal in an audit report. That is how
+  this extends adr/013 rather than reversing it — refusing to write what was *inferred*
+  says nothing against writing what was *observed*.
+- **Capture by HEAD watermark**, in `hooks/lib/commit_capture.py`, shared by the Bash
+  watcher and the `SessionStart`, `PreCompact`, `Stop` and `SessionEnd` sweeps. The
+  watcher's verb list (`commit merge rebase cherry-pick revert am apply pull`, plus
+  `checkout switch reset` to re-mark only) is a cheap trigger, **not** the correctness
+  mechanism — the watermark is. An unrecognised verb costs at most one boundary's delay,
+  because the next sweep diffs the same watermark and finds the same commits. A commit
+  is recorded once, not once per boundary.
+- **Three rails that keep `observed` honest.** Seed and attribute nothing on first sight
+  of a repository — otherwise the session's first git command would hang the entire
+  history on whatever task is claimed. Require `commit.at >= claimed_at`, which is what
+  makes `git pull` write nothing rather than fifty edges. And cap the move at
+  `commits.max_per_boundary` (default 50): a HEAD move larger than that is a rebase, not
+  an afternoon's work.
+- **New git reads** in `hooks/lib/gitlog.py` — `repo_root`, `head`, `new_commits`. All
+  read-only, all 5s-bounded, all returning `[]`/`None` on every failure including "not a
+  repo". `new_commits` deliberately **includes merges**: a squash-merge commit is the
+  work. Trailers come from git's own `%(trailers:key=…)` atom, not a regex.
+- **Cost per commit, derived at read time and never stored** — equal share within the
+  task, with the denominator always printed beside it
+  (`1 of 4 commits in abacus-7 · task total $0.8123 · apportioned-equally-within-task`).
+  Storing nothing means the apportionment can change with no data to migrate; printing
+  the denominator lets you see it and disagree. Omitted entirely, never zeroed, when the
+  task's `abacus_cost_basis` is `unavailable`. Lines-weighted apportionment was rejected
+  on merit rather than cost: a lockfile swamps the weighting, so the figure becomes less
+  accurate while looking more precise.
+- **`commits.enabled`** (default `true`), **`commits.max_per_boundary`** (50) and
+  **`commits.trailer_key`** (`Beads-Task`) in `abacus.config.json`. Deliberately **not**
+  governing settings: capture writes only to issues you already claimed, so it does not
+  widen what adr/014's acknowledgement covers. Capture still runs behind that
+  acknowledgement like every other write.
+- **`adr/analysis/`** — one companion per ADR recording the weighing an ADR compresses
+  to a paragraph: criteria stated before options, the option eliminated and by which
+  argument, calibrated confidence, the premortem. Three new conformance assertions keep
+  them honest (naming, no orphan analysis, and the parent ADR must link to its
+  companion), all of which were confirmed RED first. adr/007 gains a dated addendum:
+  the "why" pillar now has a subdivision, and the four-pillar count is unchanged.
+
+### Changed
+
+- **`/abacus:audit` reports fewer untracked commits.** A commit carrying a written edge
+  is no longer a gap, because it was tracked by a mechanism the window arithmetic cannot
+  see. A narrowing only: no new `kind`, and `untracked-commits` is still hardcoded
+  unfixable — the repair is `bd create`, which is not reversible bookkeeping.
+  `contracts/output/audit-report.md` → 1.1.0.
+- The Bash watcher's prefilter widens from `bd` to `bd` **or** `git`. Still pure string
+  work ahead of any subprocess. `contracts/input/post-tool-use-bash.md` → 1.1.0, which
+  also documents `isImage` and `noOutputExpected` — observed live, undocumented
+  upstream, and still deliberately unread: `-q` suppresses git's sha line and real
+  commands are compound, so asking git what HEAD is beats parsing what it printed.
+- `contracts/output/bd-metadata-write.md` → 1.1.0. Additive: every 1.0.0 key keeps its
+  meaning and `abacus_schema` stays at `1`.
+- **`git` is now stubbed on `PATH`** in the test suite, alongside `bd` and `npx`, and
+  `make_real_git_project()` drives a real local `git init` for `tests/unit/test_gitlog.py`
+  — which also closes a pre-existing gap, since `recent_commits` had no tests at all.
+  The suite remains fully offline.
+
+### Known limitations
+
+- A second terminal committing during a claim may be attributed to that claim. A
+  `declared` trailer overrides it. This sits alongside the existing parallel-agent
+  smearing.
+- Server-side merges (a GitHub PR merged in the browser) can never be observed by any
+  local mechanism. They arrive on the next `pull`, older than the claim, and rail 2
+  correctly declines them.
+- `observed` cannot distinguish work in a commit from work alongside it.
+- Existing untracked commits are not reconciled. Capture is forward-only; the historical
+  gap stays exactly what it was — reported by `/abacus:audit`, never written.
+- An amend or rebase orphans a recorded sha. The key is **left in place** and a reader
+  marks it `rewritten`; deleting it would be a write based on inference.
+
 ## [0.5.0] — 2026-09-01
 
 Being installed is no longer agreement. Until the settings that govern abacus's

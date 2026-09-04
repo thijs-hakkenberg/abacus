@@ -198,6 +198,45 @@ def _walk_stops():
     return stops
 
 
+def workspace_root(start_dir=None):
+    """The directory holding the ``.beads/`` that governs `start_dir`, or None.
+
+    The same upward walk and the same ``_walk_stops`` rails as
+    :func:`has_workspace`, which delegates here — one walk, so the two can never
+    disagree about which directory is in charge.
+
+    Callers need the *location* and not just the fact when they have to decide
+    whether a workspace governs a particular repository: commit capture compares
+    this against ``gitlog.repo_root``, because a ``.beads`` sitting above a
+    vendored or submodule checkout belongs to the outer project, and writing the
+    inner repository's commits onto the outer project's issues would attribute
+    work to something it is not part of.
+
+    With ``$BEADS_DIR`` set this returns that path itself rather than a directory
+    discovered by walking: the user has stated where the database is, and it is
+    not ours to infer a project boundary around it. A centralised ``BEADS_DIR``
+    outside every repository therefore captures nothing — quiet, and the
+    conservative reading of an explicit setting.
+    """
+    override = os.environ.get("BEADS_DIR")
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
+    path = os.path.abspath(start_dir or os.getcwd())
+    stops = _walk_stops()
+    while True:
+        try:
+            if os.path.realpath(path) in stops:
+                return None
+        except Exception:
+            return None
+        if os.path.isdir(os.path.join(path, ".beads")):
+            return path
+        parent = os.path.dirname(path)
+        if parent == path:
+            return None
+        path = parent
+
+
 def has_workspace(start_dir=None):
     """True if `start_dir` (or an ancestor below `$HOME`) is a beads workspace.
 
@@ -207,22 +246,7 @@ def has_workspace(start_dir=None):
     genuinely wants a home-level workspace says so explicitly instead of having
     it inferred from a directory bd created for its own bookkeeping.
     """
-    if os.environ.get("BEADS_DIR"):
-        return True
-    path = os.path.abspath(start_dir or os.getcwd())
-    stops = _walk_stops()
-    while True:
-        try:
-            if os.path.realpath(path) in stops:
-                return False
-        except Exception:
-            return False
-        if os.path.isdir(os.path.join(path, ".beads")):
-            return True
-        parent = os.path.dirname(path)
-        if parent == path:
-            return False
-        path = parent
+    return workspace_root(start_dir) is not None
 
 
 def init(cwd=None, stealth=True, timeout=15):

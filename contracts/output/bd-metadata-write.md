@@ -7,12 +7,15 @@ by invoking the `bd` CLI.
 
 - **Command:** `bd update <id> --set-metadata <key>=<value> [--set-metadata …]`
 - **Emitted by:** `hooks/lib/beads.set_metadata()`, always via
-  `hooks/lib/attribution.build_metadata()` — the single place that constructs
-  these keys, because four hooks need to finalise a task and four independent
-  implementations would drift.
+  `hooks/lib/attribution.build_metadata()` (task attribution) or
+  `hooks/lib/attribution.build_commit_edges()` (commit edges) — the single place
+  that constructs these keys, because several hooks need to finalise a task and
+  several independent implementations would drift.
 - **Callers:** `watch_bd_commands.py` (on close, and on a claim that supersedes an
   unclosed task), `stop_reconcile.py` (close seen outside the watcher),
-  `session_end.py` (session ended mid-task).
+  `session_end.py` (session ended mid-task). Commit edges come from
+  `hooks/lib/commit_capture.capture()`, which the Bash watcher, `SessionStart`,
+  `PreCompact`, `Stop` and `SessionEnd` all share.
 
 This is the plugin's primary output. The beads issue is the store of record — there
 is no private database (adr/001) — so these keys are what a future reader, report
@@ -44,9 +47,21 @@ reach bd as two words and silently truncate.
     "abacus_tool_calls": { "type": "integer", "description": "Optional OTEL enrichment. Present only when the event log yielded real activity." },
     "abacus_active_min": { "type": "integer", "description": "Optional OTEL enrichment, same condition as abacus_tool_calls." }
   },
+  "patternProperties": {
+    "^abacus_commit_[0-9a-f]{12}$": {
+      "type": "string",
+      "pattern": "^(declared|observed):[^:\\s]*:[0-9]+$",
+      "description": "One task↔commit edge. The key's suffix is the commit's abbreviated sha12; the value is <basis>:<session-id>:<commit-epoch> (adr/015). Written by commit_capture, independently of the attribution write, and at any point in a session rather than only at a boundary."
+    }
+  },
   "required": ["abacus_schema", "abacus_session_id", "abacus_partial", "abacus_duration_min", "abacus_cost_basis"]
 }
 ```
+
+Note that `required` does **not** apply to a commit edge. Edges and attribution are
+separate writes with separate lifetimes: an issue can carry edges while its cost is
+still unknown, and an issue closed without a commit carries attribution and no
+edges. A reader must treat the presence of either as independent of the other.
 
 ### The two invariants a consumer can rely on
 
@@ -62,6 +77,35 @@ wrong answer wearing the costume of a measurement; an absent key prompts a
 question instead. The same reasoning governs `abacus_tool_calls`: a zero there is
 indistinguishable from a measurement, so a readable-but-empty OTEL log writes
 nothing rather than `0`.
+
+### The commit edges
+
+**An edge never travels without its basis** — the same rule as a cost figure, for the
+same reason. The value's first field is the evidence the edge rests on, and only the
+two that were *witnessed* are ever written:
+
+| Basis | Established by | Needs a claim |
+|---|---|---|
+| `declared` | a `Beads-Task: <id>` trailer git itself parsed out of the message | no |
+| `observed` | HEAD moved during this session while that task was claimed | yes |
+
+A third tier, `inferred` — the commit's timestamp falls inside a claim window — is
+**never written to this interface**. It is what `/abacus:audit` already computes and
+reports as a proposal, and adr/013 forbids writing it. A consumer that encounters
+`inferred` here is reading data this plugin did not produce.
+
+`declared` is the only basis that can express the true m:n relation: a commit closing
+three tasks names three, and the same `abacus_commit_<sha12>` key is written onto all
+three issues with the same value. **Per-commit costs therefore do not sum to a
+repository total**, and any report showing them must say so.
+
+**Keys are read, never deleted.** An amend or a rebase orphans a recorded sha; the key
+is left in place and a reader marks it `rewritten` when `git cat-file -e` fails.
+Deleting it would be a write based on inference. Withdrawing an edge is the user's
+call, and `bd update <id> --unset-metadata abacus_commit_<sha12>` does exactly one
+edge's worth of damage — which is the whole reason the unit of write is one key
+(adr/015). Verified against bd 1.1.2 at 200 keys on one issue:
+`tests/integration/test_bd_metadata_ceiling.py`.
 
 ### Accumulation
 
@@ -94,9 +138,19 @@ bd update ab-42 \
 Flags are emitted in sorted key order — not for readability, but so the argv is
 deterministic and a test can assert on it.
 
+A commit edge is a separate `bd update`, made when the commit is seen rather than at
+the task boundary:
+
+```
+bd update ab-42 \
+  --set-metadata abacus_commit_b0cff661a2c3=observed:8f3c…:1756900000
+```
+
 ## SemVer
 
-- **Contract version:** 1.0.0
+- **Contract version:** 1.1.0 — added `abacus_commit_<sha12>` (adr/015). Additive:
+  every 1.0.0 key keeps its meaning, and a 1.0.0 reader that ignores unknown keys is
+  unaffected. `abacus_schema` stays at `1` accordingly.
 - **Migration:** `abacus_schema` carries the version in-band. A reader should check
   it before interpreting any other key, and treat an unknown value as "do not
   trust the shape".
@@ -110,9 +164,11 @@ deterministic and a test can assert on it.
 
 ## SLA + telemetry
 
-- **Freshness:** written at the task boundary, not on a schedule. Between a claim
-  and its close an issue carries no `abacus_*` keys at all, which is correct — the
-  cost is not yet known.
+- **Freshness:** attribution is written at the task boundary, not on a schedule.
+  Between a claim and its close an issue carries no `abacus_cost_*` keys at all,
+  which is correct — the cost is not yet known. A commit edge is fresher and
+  independent: it appears within one boundary of the commit, so a claimed task can
+  carry edges and no cost.
 - **Durability:** whatever `bd`'s embedded Dolt provides. The plugin adds no
   journal of its own; if the write fails it is logged to stderr and retried at the
   next boundary (Stop, then SessionEnd).

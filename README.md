@@ -186,7 +186,9 @@ $ bd show ab-14 --json | jq '.[0].metadata'
   "abacus_tokens_cache_read": 298114,
   "abacus_tokens_cache_write": 12043,
   "abacus_duration_min": 23,
-  "abacus_models": "claude-fable-5"
+  "abacus_models": "claude-fable-5",
+  "abacus_commit_b0cff661a2c3": "observed:8f3c…:1756900000",
+  "abacus_commit_47eb8e7d0f12": "declared:8f3c…:1756903400"
 }
 ```
 
@@ -205,6 +207,51 @@ recorded. A `$0.00` against a task that ran for an hour is a wrong answer wearin
 the costume of a measurement; an absent key prompts a question instead. The same
 applies to tool-call counts: a readable-but-empty OTEL log writes nothing rather
 than a zero.
+
+### Which commits a task produced
+
+One `abacus_commit_<sha12>` key per commit, valued `<basis>:<session-id>:<epoch>`. The
+relation is m:n — a commit can close several tasks, a task spans many commits — so one
+key is one edge, and withdrawing one is one `bd update --unset-metadata`.
+
+**Nothing is written into your repository to make this work.** No git hook, no
+`core.hooksPath`, no trailer added to your messages. Setting `core.hooksPath` is a
+single global slot and would silently disable whatever hooks you already have; and a
+git hook runs with no Claude environment, so no session id — the one thing capture
+exists to record. Instead abacus remembers the HEAD sha it last saw and asks git what
+moved:
+
+| Basis | Established by | Needs a claim |
+|---|---|---|
+| `declared` | git parsed a `Beads-Task: <id>` trailer out of your message | no |
+| `observed` | HEAD moved during this session while that task was claimed | yes |
+
+Git's own trailer parser decides what counts as `declared`, so the trailer has to be in
+the message's **last paragraph** — put a blank line and a `Co-Authored-By:` block after
+it and git reports no trailer, correctly.
+
+There is a third thing abacus could say — that a commit's timestamp falls inside a
+claim window — and it is **never written**. That is a guess, and guesses stay
+proposals in `/abacus:audit` (adr/013, adr/015).
+
+Three rails keep `observed` from overclaiming: the first time it sees a repository it
+records the mark and attributes **nothing** (otherwise your first commit of the session
+would drag the whole history onto the current task); a commit older than the claim is
+declined, which is what makes `git pull` write nothing rather than fifty edges; and a
+HEAD move larger than `commits.max_per_boundary` (50) is treated as a rebase and
+skipped. The verb list the watcher recognises is only a cheap trigger — the watermark is
+what makes it correct, so a commit made by a script or a Makefile is still caught by the
+`Stop`/`SessionEnd` sweep, while the session id is still known.
+
+`/cost-report` divides a task's cost equally across its commits and always prints the
+denominator beside the share. Nothing apportioned is ever stored, so the method can
+change without migrating anything — and under m:n, per-commit costs do not sum to a
+repository total.
+
+Commits made outside Claude Code are not captured, and existing history is not
+reconciled: capture is forward-only. An amend or rebase orphans a recorded sha; the key
+stays and a reader marks it `rewritten`, because deleting it would be a write based on
+inference.
 
 ## Finding what the gate could not see
 
@@ -273,6 +320,9 @@ what abacus is permitted to do, so they never re-ask.
 | `ccusage_timeout_s` | `25` | |
 | `cache_ttl_s` | `30` | Snapshot cache. The closing read always bypasses it |
 | `sync_on_session_end` | `"off"` | ⚖ `push` \| `sync` \| `off`. Opt-in: reaching a remote as a session closes is not a default |
+| `commits.enabled` | `true` | Record task↔commit edges. Not a governing key: capture writes only onto issues you already claimed |
+| `commits.max_per_boundary` | `50` | A HEAD move larger than this is a rebase or a pull, not an afternoon's work — nothing is attributed |
+| `commits.trailer_key` | `"Beads-Task"` | The commit-message trailer that declares a task explicitly |
 | `statusline` | `true` | The one-line `UserPromptSubmit` label |
 | `otel_enrichment` | `true` | |
 | `otel_events_path` | `~/.claude/logs/claude-code-events.jsonl` | |
@@ -320,6 +370,15 @@ Test/override env vars: `ABACUS_CONFIG`, `ABACUS_STATE_DIR`, `ABACUS_CCUSAGE_CMD
    opened under a declared root is initialised like any other git project. Stealth
    keeps it out of commits; it does not prevent the act. Narrow your `roots`
    (adr/012).
+7. **A commit made in a second terminal during a claim may be attributed to it.** The
+   watermark measures the repository, not the window that moved it. A `Beads-Task:`
+   trailer overrides the guess.
+8. **`observed` cannot distinguish work in a commit from work alongside it.** The edge
+   means "this commit landed while this task was claimed", and nothing stronger.
+9. **Server-side merges are invisible to any local mechanism.** A PR merged in the
+   browser arrives on your next `pull`, older than the claim, and is correctly
+   declined. Existing history is likewise never reconciled — capture is forward-only
+   (adr/015).
 
 ## Development
 

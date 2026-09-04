@@ -74,6 +74,21 @@ def _defaults():
             # claim window. A git revision range, passed to `git log --since`.
             "commit_window": "30 days ago",
         },
+        "commits": {
+            # Recording which commits a task produced. On by default: it writes
+            # only onto issues the user already has, and it is the one part of
+            # the model that was previously unrecorded entirely (adr/015).
+            "enabled": True,
+            # A HEAD move larger than this in a single Bash call is a rebase, a
+            # pull or a branch's worth of history, not one boundary's work — so
+            # nothing is recorded for it. 50 is far above any plausible burst of
+            # real commits and far below the size of a history.
+            "max_per_boundary": 50,
+            # The commit trailer by which a message *declares* its tasks. The one
+            # tier that can express true m:n, so it is worth being configurable
+            # for anyone whose repo already uses a different key.
+            "trailer_key": "Beads-Task",
+        },
         # 'push' = `bd dolt push` at session end, 'sync', or 'off'.
         "sync_on_session_end": "off",
         "statusline": True,

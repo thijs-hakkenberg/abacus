@@ -346,3 +346,155 @@ def test_no_hook_blocks_when_bd_is_missing_entirely(harness):
         assert res.rc == 0, script
         assert res.permission_decision is None, script
         assert "Traceback" not in res.stderr, script
+
+
+# ── commits, across the boundaries that produced them ───────────────────────
+#
+# The unit tests drive `commit_capture.capture` against planted state. These drive
+# the seam it actually lives in: the watermark one boundary writes has to be the
+# one the next boundary reads, and the state file it lives in is shared with the
+# claim snapshot. Both of those are handoffs, which is the class of bug this level
+# exists to catch.
+#
+# git is the stub here, not a real repository — the hook subprocesses get the stub
+# because it prefixes their PATH. Format fidelity is `tests/unit/test_gitlog.py`'s
+# job, against real git; what these assert is which boundary wrote what.
+
+SEP = "\x1f"
+
+
+def _plant_head(harness, sha):
+    harness.set_git("rev-parse.HEAD", stdout="%s\n" % sha)
+
+
+def _plant_new_commit(harness, sha, when, subject="do the work", declares=""):
+    harness.set_git("log", stdout=SEP.join([sha, str(int(when)), subject, declares]))
+
+
+def _commit_keys(harness):
+    """Every `abacus_commit_*` key written, as (issue, key, value)."""
+    out = []
+    for call in harness.bd_calls():
+        parts = call.split()
+        for i, part in enumerate(parts):
+            if part != "--set-metadata" or i + 1 >= len(parts):
+                continue
+            key, _, value = parts[i + 1].partition("=")
+            if key.startswith("abacus_commit_"):
+                out.append((parts[2], key, value))
+    return out
+
+
+def test_a_commit_made_between_a_claim_and_a_close_is_recorded_against_the_task(harness):
+    """The transcript the feature exists for, end to end.
+
+    Note what has to line up for this to pass: the claim boundary writes
+    `claimed_at` and the git boundary reads it back out of the same state file to
+    apply rail 2, then the close boundary writes cost onto the issue the edge is
+    already on. Three writers, one file, one issue.
+    """
+    import time
+
+    harness.make_beads_project()
+    harness.make_git_project()
+    harness.set_bd_json("show", [TASK_A])
+    harness.set_bd_json("list", [TASK_A])
+    harness.set_ccusage_session("sess-1", cost=1.0, tokens=1000)
+    harness.set_git("rev-parse.--show-toplevel", stdout="%s\n" % harness.project)
+    _plant_head(harness, "a" * 40)
+
+    # 1. The session opens and the repository is seen for the first time: rail 1
+    #    seeds the watermark and attributes nothing.
+    harness.run_hook("session_start.py", session_payload())
+    assert _commit_keys(harness) == [], "first sight must attribute nothing"
+    marks = (harness.read_state("sess-1") or {}).get("head_watermarks") or {}
+    assert marks.get(str(harness.project)) == "a" * 40
+
+    # 2. A task is claimed.
+    harness.run_hook("watch_bd_commands.py",
+                     post_bash_payload("bd update bd-a1b2 --claim --json"))
+    assert (harness.read_state("sess-1") or {}).get("claimed_at")
+
+    # 3. A commit lands during the claim.
+    harness.set_ccusage_session("sess-1", cost=1.8, tokens=4000)
+    _plant_head(harness, "b" * 40)
+    _plant_new_commit(harness, "b" * 40, time.time() + 60)
+    harness.run_hook("watch_bd_commands.py",
+                     post_bash_payload("git commit -q -m 'add the widget'"))
+
+    edges = _commit_keys(harness)
+    assert len(edges) == 1, "expected exactly one edge, got %s" % (edges,)
+    issue, key, value = edges[0]
+    assert issue == "bd-a1b2"
+    assert key == "abacus_commit_%s" % ("b" * 12)
+    assert value.startswith("observed:sess-1:")
+
+    # 4. The watermark advanced, so the same commit is not written twice.
+    harness.run_hook("watch_bd_commands.py", post_bash_payload("git commit -q -m 'again'"))
+    assert len(_commit_keys(harness)) == 1, "a commit must be recorded once, not once per boundary"
+
+    # 5. Closing the task writes cost onto the same issue the edge is on.
+    harness.run_hook("watch_bd_commands.py", post_bash_payload("bd close bd-a1b2"))
+    write = _last_write(harness)
+    assert write["_issue"] == "bd-a1b2"
+    assert write["abacus_cost_basis"] == "ccusage-local-list-rate"
+
+
+def test_a_commit_no_verb_matched_is_still_caught_while_the_session_is_open(harness):
+    """The sweep is what makes the verb list a trigger rather than the mechanism.
+
+    A commit made by a shell script or a Makefile target matches no verb, so the
+    watcher never fires. Stop fires anyway, and the session id — the one thing a
+    git hook could never know — is still known at that point.
+    """
+    import time
+
+    harness.make_beads_project()
+    harness.make_git_project()
+    harness.set_bd_json("show", [TASK_A])
+    harness.set_bd_json("list", [TASK_A])
+    harness.set_ccusage_session("sess-1", cost=1.0, tokens=1000)
+    harness.set_git("rev-parse.--show-toplevel", stdout="%s\n" % harness.project)
+    _plant_head(harness, "a" * 40)
+
+    # SessionStart is what makes the sweep able to say anything at all: without a
+    # watermark to diff against, rail 1 seeds and writes nothing however many
+    # commits landed. The sweep repairs a missed *boundary*, never a missed session.
+    harness.run_hook("session_start.py", session_payload())
+    harness.run_hook("watch_bd_commands.py",
+                     post_bash_payload("bd update bd-a1b2 --claim --json"))
+    _plant_head(harness, "c" * 40)
+    _plant_new_commit(harness, "c" * 40, time.time() + 60)
+
+    # The command that made it says nothing about git.
+    res = harness.run_hook("watch_bd_commands.py", post_bash_payload("./scripts/release.sh"))
+    assert res.rc == 0
+    assert _commit_keys(harness) == [], "no verb matched, so the watcher must not fire"
+
+    harness.run_hook("stop_reconcile.py", session_payload(event="Stop"))
+    edges = _commit_keys(harness)
+    assert [(i, k) for i, k, _ in edges] == [("bd-a1b2", "abacus_commit_%s" % ("c" * 12))]
+    assert edges[0][2].startswith("observed:sess-1:")
+
+
+def test_a_pull_that_moves_head_backwards_in_time_writes_nothing(harness):
+    """Rail 2 at the level it matters: fifty upstream commits are not this task's."""
+    harness.make_beads_project()
+    harness.make_git_project()
+    harness.set_bd_json("show", [TASK_A])
+    harness.set_bd_json("list", [TASK_A])
+    harness.set_ccusage_session("sess-1", cost=1.0, tokens=1000)
+    harness.set_git("rev-parse.--show-toplevel", stdout="%s\n" % harness.project)
+    _plant_head(harness, "a" * 40)
+
+    harness.run_hook("watch_bd_commands.py",
+                     post_bash_payload("bd update bd-a1b2 --claim --json"))
+    _plant_head(harness, "d" * 40)
+    harness.set_git("log", stdout="\n".join(
+        SEP.join(["%040x" % (i + 1), "1700000000", "upstream %d" % i, ""])
+        for i in range(20)))
+
+    harness.run_hook("watch_bd_commands.py", post_bash_payload("git pull --rebase"))
+    assert _commit_keys(harness) == []
+    marks = (harness.read_state("sess-1") or {}).get("head_watermarks") or {}
+    assert marks.get(str(harness.project)) == "d" * 40, "the watermark must still advance"

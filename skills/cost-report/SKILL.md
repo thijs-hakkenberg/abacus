@@ -35,6 +35,10 @@ exists precisely so a reader can tell it is looking at a shape it does not know.
 Per task: id, title, cost estimate, total tokens, duration in minutes, and whether
 it is partial. Then a total.
 
+**4. Only if the user asked about commits**, read the `abacus_commit_*` keys off the
+same metadata you already have. No extra `bd` call, and no `git` call unless you are
+checking whether a sha still exists.
+
 ## Presenting the cost — three rules that are not negotiable
 
 These come from adr/005 and `contracts/output/bd-metadata-write.md`, and they are
@@ -54,6 +58,48 @@ absent figure prompts a question; a fabricated zero ends one.
 **Exclude unavailable tasks from the total, and say how many you excluded.** A total
 that silently drops rows is a wrong number; a total that says "sum of 9 of 12 tasks;
 3 had no readable cost" is a right one.
+
+## Cost per commit
+
+A task's metadata may carry one `abacus_commit_<sha12>` key per commit recorded against
+it, each valued `<basis>:<session-id>:<epoch>` (adr/015). The key's suffix is the
+abbreviated sha; the basis is `declared` (the commit message named the task in a
+`Beads-Task:` trailer) or `observed` (HEAD moved while the task was claimed).
+
+**Nothing apportioned is stored.** The share is computed here, at read time, from the
+task's own total and its own edge count — which is why the method can change without
+migrating anything. Divide equally within the task, and **always print the
+denominator**:
+
+```
+b0cff66  $0.20  (1 of 4 commits in abacus-7 · task total $0.8123 · apportioned-equally-within-task)
+```
+
+That trailing clause is not decoration. It is what lets the user see the apportionment
+and disagree with it, which is the only honest posture for a figure this soft. Drop it
+and the number travels as though it were measured.
+
+Four rules on top of the three above, all of which follow from them:
+
+- **Omit the commit's share entirely when the task's `abacus_cost_basis` is
+  `unavailable`.** There is no task total to divide, so there is no share. List the
+  commit with its basis and no figure — never `$0.00`, and never a guess from duration.
+- **Say that per-commit costs do not sum to a repository total.** The relation is m:n:
+  a `declared` commit closing three tasks carries the same sha key on all three issues,
+  so its work is counted once per task. When you show such a commit, show the **set** of
+  shares rather than picking one or adding them.
+- **Report the basis with every edge**, exactly as `abacus_cost_basis` accompanies every
+  cost. `observed` means "this commit landed while this task was claimed" and nothing
+  stronger — it cannot distinguish work in a commit from work alongside it. Do not
+  present the two bases as equally strong evidence.
+- **A sha that no longer resolves is marked, not dropped.** If `git cat-file -e <sha>^{commit}`
+  fails the commit was amended or rebased away; label the row `rewritten` and keep it.
+  The plugin never deletes these keys (that would be a write based on inference), so a
+  report that quietly hid them would disagree with the store of record.
+
+An `inferred` basis is never written by this plugin. If you see one, the data did not
+come from abacus — say so rather than reporting it. Commits that fall in a claim window
+with no edge are `/abacus:audit`'s business, reported there as a proposal.
 
 ## Cross-checking against the session total
 

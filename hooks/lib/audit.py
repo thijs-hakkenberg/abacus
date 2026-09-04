@@ -215,11 +215,38 @@ def _windows(issues, now):
     return out
 
 
+def _recorded_shas(issues):
+    """Every commit sha12 that some issue carries an ``abacus_commit_*`` edge for.
+
+    A set across the whole workspace, not per issue: task↔commit is m:n, so there
+    is no *the* issue for a commit. The question is whether anything recorded this
+    sha, and one commit closing three tasks is the normal case rather than the
+    awkward one.
+
+    Read through ``attribution.commit_edges``, which is also what makes a
+    malformed value vouch for nothing — it skips a value it cannot parse, and an
+    unreadable value must not quietly widen what the audit calls tracked.
+    """
+    out = set()
+    for i in issues:
+        for edge in attribution.commit_edges(metadata_of(i)):
+            out.add(edge["sha12"])
+    return out
+
+
 def _untracked_commits(issues, commits, now):
     windows = _windows(issues, now)
+    # A commit with a written edge was tracked by a mechanism the window
+    # arithmetic cannot see: the edge records what was *observed* at capture, where
+    # a claim window can only support what is *inferred* from timestamps (adr/015).
+    # This narrows the gap set and never widens it — nothing new is reported here,
+    # and nothing becomes fixable that was not.
+    recorded = _recorded_shas(issues)
     out = []
     for c in commits or ():
         if not isinstance(c, dict):
+            continue
+        if str(c.get("sha") or "")[:attribution.SHA_LEN].lower() in recorded:
             continue
         at = _seconds(c.get("at"))
         if at is None:

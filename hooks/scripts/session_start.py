@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import beads  # noqa: E402
 import ccusage  # noqa: E402
+import commit_capture  # noqa: E402
 import consent  # noqa: E402
 import hook_io  # noqa: E402
 import state_store  # noqa: E402
@@ -223,6 +224,17 @@ def main():
         # Nothing else ever cleans these up; without this the state directory
         # grows by one file per session forever.
         state_store.prune(int(cfg.get("state_max_age_days") or 14))
+
+    # After the baseline, so a task adopted from another terminal already has its
+    # `claimed_at` in state for capture's second rail to compare against.
+    #
+    # Not `reseed=True`, even here. On a fresh session there is no watermark, so
+    # this *is* the seed (rail 1) and writes nothing. On a resume or a compaction
+    # there already is one, and re-seeding would silently discard every commit
+    # made since the last boundary — a long session that compacts is exactly the
+    # one most likely to have some. So both cases take the ordinary path: seed if
+    # absent, sweep if present.
+    commit_capture.capture(session, cwd, cfg)
 
     # PreCompact declares SessionStart: the context is injected into the
     # post-compaction session, which is what Claude Code reads it as.

@@ -32,6 +32,7 @@ the read-modify-write is safe and needs no race with ``bd close``.
 """
 
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -45,6 +46,16 @@ import abacus_time  # noqa: E402
 SCHEMA_VERSION = 1
 COST_BASIS = "ccusage-local-list-rate"
 BASIS_UNAVAILABLE = "unavailable"
+
+# The bases an edge may be written at. `inferred` is deliberately absent: a
+# timestamp falling inside a claim window is a proposal, and adr/013 already
+# refused to write one. See adr/015.
+EDGE_DECLARED = "declared"
+EDGE_OBSERVED = "observed"
+
+COMMIT_KEY_PREFIX = "abacus_commit_"
+SHA_LEN = 12
+_SHA12 = re.compile(r"^[0-9a-f]{%d}$" % SHA_LEN)
 
 # The metadata prefix this plugin wrote before it was renamed to abacus. Read
 # only, never written — see ``_normalise_prefix``.
@@ -246,6 +257,115 @@ def backfill_metadata(issue, now=None):
         meta["abacus_duration_min"] = duration
 
     return meta
+
+
+# ── task↔commit edges ───────────────────────────────────────────────────────
+# One metadata key per commit, on the task issue:
+#
+#     abacus_commit_<sha12> = <basis>:<session-id>:<epoch>
+#
+# One edge, one key, undone by one --unset-metadata. That the unit of write
+# equals the unit of the fact is the whole argument for this shape over a packed
+# list (adr/015): a packed value needs read-modify-write to merge, and two
+# terminals committing at once would lose edges.
+
+
+def _edge_field(text):
+    """Neutralise a value going into a colon-separated field.
+
+    Whitespace first, because ``beads._metadata_token`` collapses it to
+    underscores — a *silent mutation* of the store of record rather than a failed
+    write. Then colons, which would add a field the reader cannot resolve. The
+    session id arrives from Claude Code and is not ours to validate at source, so
+    it is neutralised here rather than trusted.
+    """
+    return "_".join(str(text or "").split()).replace(":", "-")
+
+
+def build_commit_edges(commits, session, current_task=None, claimed_at=None):
+    """``{issue_id: {key: value}}`` for `commits`. Writes nothing.
+
+    Two tiers, and the difference between them is the point of adr/015:
+
+    **declared** — the commit message carries a ``Beads-Task:`` trailer. The only
+    tier that can express true m:n, and the only one that needs no claim: a
+    trailer is the author's own statement of what the commit belongs to, so it
+    does not become false because abacus was not watching. A declaration
+    *supersedes* the observed edge rather than adding to it — recording both would
+    turn an explicit statement into one opinion among two.
+
+    **observed** — HEAD moved while `current_task` was claimed. Guarded by rail 2,
+    ``commit.at >= claimed_at``: a commit older than the claim cannot have been
+    observed being made during it. That single comparison is what makes ``git
+    pull`` harmless, since fifty upstream commits all predate the claim.
+
+    An unknown `claimed_at` writes nothing rather than skipping the check. An edge
+    whose rail could not be evaluated is a guess, and not being a guess is the
+    entire warrant for this tier.
+
+    Rails 1 (seed, never attribute, on first sight) and 3 (cap per boundary) are
+    the caller's: they are properties of the HEAD *move*, not of a commit.
+    """
+    edges = {}
+    claim_epoch = abacus_time.parse_iso(claimed_at)
+
+    for entry in commits or ():
+        sha = str(entry.get("sha") or "")
+        if len(sha) < SHA_LEN:
+            continue
+        key = COMMIT_KEY_PREFIX + sha[:SHA_LEN].lower()
+        at = abacus_time.parse_iso(entry.get("at"))
+        if at is None:
+            continue  # no epoch to record, and 0 would read as 1970
+
+        declared = [str(i) for i in (entry.get("declared") or ()) if str(i).strip()]
+        if declared:
+            targets, basis = declared, EDGE_DECLARED
+        elif current_task and claim_epoch is not None and at >= claim_epoch:
+            targets, basis = [str(current_task)], EDGE_OBSERVED
+        else:
+            continue
+
+        value = "%s:%s:%d" % (basis, _edge_field(session), int(at))
+        for issue_id in targets:
+            edges.setdefault(issue_id, {})[key] = value
+
+    return edges
+
+
+def commit_edges(metadata):
+    """``[{"sha12", "basis", "session", "at"}]`` from an issue's metadata.
+
+    Chronological, and tolerant: a key that is not a sha or a value with fewer
+    than three fields is not ours and is skipped. An *unreadable epoch* is
+    different — the edge itself is still a fact — so it reads back with
+    ``at=None``. Never 0, which would render as 1970-01-01 and read as a
+    measurement (adr/005).
+
+    Runs through ``_normalise_prefix``, so edges written before the rename are
+    still readable. Reads understand ``tct_``; writes never emit it.
+    """
+    if not isinstance(metadata, dict):
+        return []
+
+    out = []
+    for key, raw in _normalise_prefix(metadata).items():
+        if not key.startswith(COMMIT_KEY_PREFIX):
+            continue
+        sha12 = key[len(COMMIT_KEY_PREFIX):].lower()
+        if not _SHA12.match(sha12):
+            continue
+        parts = str(raw).split(":")
+        if len(parts) < 3:
+            continue
+        try:
+            at = abacus_time.iso_from_epoch(int(parts[2]))
+        except (TypeError, ValueError):
+            at = None
+        out.append({"sha12": sha12, "basis": parts[0], "session": parts[1],
+                    "at": at})
+
+    return sorted(out, key=lambda e: (e["at"] is None, e["at"] or "", e["sha12"]))
 
 
 def clear_current(session, now=None):

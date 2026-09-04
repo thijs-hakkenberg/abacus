@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import attribution  # noqa: E402
 import beads  # noqa: E402
+import commit_capture  # noqa: E402
 import consent  # noqa: E402
 import hook_io  # noqa: E402
 import state_store  # noqa: E402
@@ -63,6 +64,13 @@ def main():
     if not consent.is_acknowledged(cfg):
         state_store.prune(int(cfg.get("state_max_age_days") or 14))
         return 0
+
+    # Before the partial write, because that clears the claim the `observed` tier
+    # needs — and before the push below, or a sync would ship the session without
+    # the edges it just recorded. A user who commits and immediately closes the
+    # window gets no Stop after that commit, so this is the last chance to record
+    # it against the session that made it (adr/015).
+    commit_capture.capture(session, cwd, cfg)
 
     state = state_store.load(session)
     current = state.get("current_task")
