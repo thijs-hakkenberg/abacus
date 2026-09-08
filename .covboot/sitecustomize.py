@@ -28,20 +28,24 @@ A second failure mode, found by a teammate probing this file directly: a
 `COVERAGE_PROCESS_START` pointing at a config file that does not exist (or is
 otherwise unreadable) makes `coverage.process_startup()` raise its own
 `ConfigError`, not `ImportError` — the narrower except above did not catch it.
-That does *not* crash the child, corrected after the same teammate ran the
-probe: `site.execsitecustomize()` already wraps this whole module's
-execution in its own broad `except Exception`, so an uncaught `ConfigError`
-here would still print one quiet, lowercase `Error in sitecustomize; ...`
-line to stderr and let the interpreter continue — no traceback, no non-zero
-exit, no failure the suite's `"Traceback" not in res.stderr` assertions
-would ever see either way. Catching it here does not add safety the
-interpreter didn't already have; it removes that one stderr line, which is
-currently the *only* local symptom of a broken config, in exchange for
-quietness at exactly the layer this file lives in. The loud signal on
-purpose lives one layer up, in `scripts/coverage.sh`, which asserts at
-least one `.coverage.<pid>` data file was actually produced before it calls
-`combine` — that is what turns a misconfigured run into a reported error
-instead of a silently too-low number, whether or not this except is here.
+That does *not* crash the child. Verified empirically by the same teammate:
+`site.execsitecustomize()` already wraps this whole module's execution in
+its own broad `except Exception`, so an uncaught `ConfigError` here still
+prints one quiet, lowercase `Error in sitecustomize; ...` line to stderr —
+and the child runs to completion and exits 0, having written **no data
+file** for that process. The failure mode is silent under-reporting, not a
+crash: no traceback, no non-zero exit, nothing the suite's
+`"Traceback" not in res.stderr` assertions would ever catch, just one
+process's worth of coverage quietly missing from the eventual `combine`.
+Catching the `ConfigError` here does not prevent a crash that was never
+going to happen; it only removes that one stderr line, which is currently
+the *only* local symptom of a broken config, in exchange for quietness at
+exactly the layer this file lives in. The loud signal on purpose lives one
+layer up, in `scripts/coverage.sh`, which asserts at least one
+`.coverage.<pid>` data file was actually produced before it calls
+`combine` — that is what turns this silent under-reporting into a reported
+error instead of a too-low number nobody notices, whether or not this
+except is here.
 """
 import os
 
