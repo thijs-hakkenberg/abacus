@@ -28,15 +28,20 @@ A second failure mode, found by a teammate probing this file directly: a
 `COVERAGE_PROCESS_START` pointing at a config file that does not exist (or is
 otherwise unreadable) makes `coverage.process_startup()` raise its own
 `ConfigError`, not `ImportError` — the narrower except above did not catch it.
-Left uncaught, that exception would propagate out of site initialisation and
-crash every one of the ~700 hook subprocesses the suite spawns with a
-confusing traceback, which is a worse failure than a wrong coverage number:
-this file only instruments measurement, it has no business taking the child
-process down with it. Catching broadly here means a misconfigured run stays
-quiet at the point of failure — the loud signal belongs in
-`scripts/coverage.sh`, which asserts at least one `.coverage.<pid>` data file
-was actually produced before it calls `combine`, so a broken config is
-reported as an error there instead of silently landing on a too-low number.
+That does *not* crash the child, corrected after the same teammate ran the
+probe: `site.execsitecustomize()` already wraps this whole module's
+execution in its own broad `except Exception`, so an uncaught `ConfigError`
+here would still print one quiet, lowercase `Error in sitecustomize; ...`
+line to stderr and let the interpreter continue — no traceback, no non-zero
+exit, no failure the suite's `"Traceback" not in res.stderr` assertions
+would ever see either way. Catching it here does not add safety the
+interpreter didn't already have; it removes that one stderr line, which is
+currently the *only* local symptom of a broken config, in exchange for
+quietness at exactly the layer this file lives in. The loud signal on
+purpose lives one layer up, in `scripts/coverage.sh`, which asserts at
+least one `.coverage.<pid>` data file was actually produced before it calls
+`combine` — that is what turns a misconfigured run into a reported error
+instead of a silently too-low number, whether or not this except is here.
 """
 import os
 
@@ -49,6 +54,7 @@ except ImportError:  # only reachable if coverage is not installed
     pass
 except Exception:
     # Any other failure to start subprocess coverage (e.g. ConfigError from
-    # a missing/unreadable .coveragerc) must not take the hook subprocess
-    # down with it -- see the docstring above.
+    # a missing/unreadable .coveragerc). site.execsitecustomize() would catch
+    # this anyway and let the child continue -- this except only silences the
+    # one stderr line that failure would otherwise print. See the docstring.
     pass
