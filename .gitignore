@@ -2,6 +2,11 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .coverage
+# Per-process data files from `parallel = True` (.coveragerc). The suite runs
+# every hook as a real subprocess, so one measured run leaves hundreds of
+# .coverage.<host>.<pid>.<random> files behind for `coverage combine` to merge.
+# The bare `.coverage` above does not match them.
+.coverage.*
 htmlcov/
 .DS_Store
 *.egg-info/

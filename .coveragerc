@@ -1,0 +1,20 @@
+[run]
+# Absolute, via env interpolation (coverage >= 5 supports ${VAR}) rather than
+# the relative "hooks": each hook subprocess runs with its cwd inside a
+# sandboxed tmp project dir (tests/conftest.py), not the repo root, so a
+# relative source path resolves against the wrong directory and silently
+# excludes everything under hooks/ from that child's measurement.
+source = ${ABACUS_COVERAGE_SOURCE}
+branch = True
+parallel = True
+
+[report]
+show_missing = True
+skip_covered = False
+precision = 1
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+
+[html]
+directory = htmlcov
