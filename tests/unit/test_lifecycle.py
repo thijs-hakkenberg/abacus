@@ -105,6 +105,28 @@ def test_the_statusline_declares_the_right_event_name(harness):
     assert (data.get("hookSpecificOutput") or {}).get("hookEventName") == "UserPromptSubmit"
 
 
+def test_the_statusline_truncates_a_long_title(harness):
+    """Prepended to every prompt the user types; an unbounded title would spend
+    an unbounded amount of their own context on a label."""
+    harness.make_beads_project()
+    harness.write_state("sess-1", _claimed_state(current_title="x" * 200))
+    res = harness.run_hook("prompt_statusline.py", session_payload(event="UserPromptSubmit"))
+    context = _context(res)
+    assert "…" in context
+    assert "x" * 200 not in context
+
+
+def test_the_statusline_omits_the_title_segment_when_there_is_none(harness):
+    res_state = _claimed_state()
+    res_state["current_title"] = ""
+    harness.make_beads_project()
+    harness.write_state("sess-1", res_state)
+    res = harness.run_hook("prompt_statusline.py", session_payload(event="UserPromptSubmit"))
+    context = _context(res)
+    assert "bd-a1b2" in context
+    assert " — " not in context
+
+
 def test_the_statusline_never_blocks_a_prompt(harness):
     harness.make_beads_project()
     res = harness.run_hook("prompt_statusline.py", "not-a-dict")
@@ -237,6 +259,21 @@ def test_the_push_happens_after_the_metadata_write(harness):
     write = next(i for i, c in enumerate(calls) if "--set-metadata" in c)
     push = next(i for i, c in enumerate(calls) if "dolt push" in c)
     assert write < push
+
+
+def test_session_end_syncs_when_configured_to_sync(harness):
+    harness.make_beads_project()
+    harness.write_config({"sync_on_session_end": "sync"})
+    harness.run_hook("session_end.py", session_payload(event="SessionEnd"))
+    assert any("dolt sync" in c for c in harness.bd_calls())
+
+
+def test_session_end_never_syncs_without_a_beads_workspace(harness):
+    """No `.beads/` means nothing local for a push or a sync to ship — and
+    `has_workspace` gates the call before bd is ever asked to do either."""
+    harness.write_config({"sync_on_session_end": "push"})
+    harness.run_hook("session_end.py", session_payload(event="SessionEnd"))
+    assert not any("dolt" in c for c in harness.bd_calls())
 
 
 def test_session_end_prunes_stale_state(harness):

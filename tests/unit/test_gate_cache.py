@@ -160,6 +160,27 @@ def test_the_lazy_snapshot_cannot_outlive_the_gates_hook_timeout(harness):
         "hook timeout" % elapsed)
 
 
+def test_an_unparsable_ttl_env_value_falls_back_to_the_default(harness):
+    harness.make_beads_project()
+    harness.set_bd_json("list", CLAIMED)
+    res = _gate(harness, ABACUS_GATE_CACHE_TTL_S="not-a-number")
+    assert res.permission_decision != "deny"
+
+
+def test_a_corrupted_cache_timestamp_is_not_treated_as_fresh(harness):
+    """`gate_allow.at` is written by this hook itself and should always be a
+    number, but a corrupted state file must not crash the freshness check --
+    it should just be treated as not-fresh and re-query bd."""
+    harness.make_beads_project()
+    harness.set_bd_json("list", CLAIMED)
+    harness.write_state("sess-1", {"gate_allow": {"cwd": str(harness.project),
+                                                   "at": "not-a-number"}})
+    res = _gate(harness, ABACUS_GATE_CACHE_TTL_S=30)
+    assert res.permission_decision != "deny"
+    assert [c for c in harness.bd_calls() if c.startswith("bd list")], (
+        "a corrupted cache entry must not be trusted; bd should still be queried")
+
+
 def test_a_snapshot_that_times_out_still_leaves_the_task_tracked(harness):
     """Losing the cost figure is acceptable; losing the fact that a task is
     current is not — the statusline and Stop reconciliation both depend on it."""

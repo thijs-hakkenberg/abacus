@@ -141,6 +141,19 @@ def test_recent_commits_is_empty_when_git_times_out(gitlog, git_repo, monkeypatc
     assert gitlog.recent_commits(cwd=str(git_repo.path)) == []
 
 
+def test_recent_commits_skips_a_line_with_too_few_fields(gitlog, git_repo, monkeypatch):
+    """git's own format always has the fields; this defends the parse anyway
+    against a line that does not, rather than trusting the format blindly."""
+    monkeypatch.setattr(gitlog, "_git", lambda *a, **kw: "\nonly-one-field\n")
+    assert gitlog.recent_commits(cwd=str(git_repo.path)) == []
+
+
+def test_recent_commits_skips_a_line_with_an_unparsable_timestamp(gitlog, git_repo, monkeypatch):
+    sep = gitlog._SEP
+    monkeypatch.setattr(gitlog, "_git", lambda *a, **kw: "abc123%snot-a-timestamp%ssubject\n" % (sep, sep))
+    assert gitlog.recent_commits(cwd=str(git_repo.path)) == []
+
+
 def test_recent_commits_never_spawns_git_outside_a_repository(gitlog, tmp_path, monkeypatch):
     """The order matters: ``has_repo`` gates the subprocess, not the reverse."""
     calls = []
@@ -365,6 +378,19 @@ def test_new_commits_can_return_more_than_a_cap_so_the_caller_can_detect_it(
 
     assert len(gitlog.new_commits(base, cwd=str(git_repo.path), limit=3)) == 3
     assert len(gitlog.new_commits(base, cwd=str(git_repo.path), limit=4)) == 4
+
+
+def test_new_commits_skips_a_line_with_too_few_fields(gitlog, git_repo, monkeypatch):
+    base = git_repo.commit("base")
+    monkeypatch.setattr(gitlog, "_git", lambda *a, **kw: "\nonly-one-field\n")
+    assert gitlog.new_commits(base, cwd=str(git_repo.path)) == []
+
+
+def test_new_commits_skips_a_line_with_an_unparsable_timestamp(gitlog, git_repo, monkeypatch):
+    base = git_repo.commit("base")
+    sep = gitlog._SEP
+    monkeypatch.setattr(gitlog, "_git", lambda *a, **kw: "abc123%snot-a-timestamp%ssubject%s\n" % (sep, sep, sep))
+    assert gitlog.new_commits(base, cwd=str(git_repo.path)) == []
 
 
 def test_new_commits_survives_a_subject_containing_the_separator_candidates(

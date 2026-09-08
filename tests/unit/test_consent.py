@@ -249,3 +249,81 @@ import consent, json
 print(json.dumps({"notice": consent.notice()}))
 """)
     assert out["notice"] == ""
+
+
+def test_a_non_dict_record_is_not_an_acknowledgement(harness):
+    harness.revoke_acknowledgement()
+    (harness.state_dir / "acknowledged.json").write_text(json.dumps(["not", "a", "dict"]))
+    out = _probe(harness, """
+import consent, json
+print(json.dumps({"ack": consent.is_acknowledged()}))
+""")
+    assert out["ack"] is False
+
+
+def test_a_record_declaring_an_unknown_schema_is_not_an_acknowledgement(harness):
+    """A record written by a future version, declaring a schema we do not know how
+    to read, must not be silently treated as agreement to whatever we think it says."""
+    harness.revoke_acknowledgement()
+    (harness.state_dir / "acknowledged.json").write_text(json.dumps(
+        {"schema": 99, "fingerprint": "whatever-a-future-version-computed"}))
+    out = _probe(harness, """
+import consent, json
+print(json.dumps({"ack": consent.is_acknowledged(), "status": consent.status()}))
+""")
+    assert out["ack"] is False
+    assert out["status"] == "never"
+
+
+def test_changed_keys_of_a_record_missing_settings_names_everything(harness):
+    """A record with a fingerprint but no `settings` payload is unreadable in the
+    one way that matters for a diff -- there is nothing to compare against, so
+    every governing key is reported as changed rather than none of them."""
+    harness.revoke_acknowledgement()
+    (harness.state_dir / "acknowledged.json").write_text(json.dumps(
+        {"schema": 1, "fingerprint": "irrelevant-does-not-match-anyway"}))
+    out = _probe(harness, """
+import consent, json
+print(json.dumps({"changed": sorted(consent.changed_keys())}))
+""")
+    assert out["changed"] == sorted([
+        "auto_init.enabled", "auto_init.roots", "auto_init.stealth",
+        "gate.enabled", "gate.non_beads_project", "sync_on_session_end",
+    ])
+
+
+def test_revoking_a_nonexistent_acknowledgement_returns_false(harness):
+    harness.revoke_acknowledgement()
+    out = _probe(harness, """
+import consent, json
+print(json.dumps({"ok": consent.revoke()}))
+""")
+    assert out["ok"] is False
+
+
+def test_acknowledge_returns_false_when_the_write_fails(harness):
+    """The write is atomic, but atomic is not the same as guaranteed -- a state
+    dir that turns unwritable must fail the call rather than raise past it."""
+    harness.revoke_acknowledgement()
+    os.chmod(str(harness.state_dir), 0o500)
+    try:
+        out = _probe(harness, """
+import consent, json
+print(json.dumps({"ok": consent.acknowledge()}))
+""")
+    finally:
+        os.chmod(str(harness.state_dir), 0o700)
+    assert out["ok"] is False
+
+
+def test_the_notice_says_any_git_repository_when_roots_reads_as_empty_list(harness):
+    """`auto_init.roots: []` (an explicit empty list) is a different thing to
+    have agreed to than an unreadable config (which reads as None) -- an empty
+    list means "no root restriction", not "nothing"."""
+    harness.revoke_acknowledgement()
+    harness.write_config({"auto_init": {"enabled": True, "roots": []}}, acknowledge=False)
+    out = _probe(harness, """
+import consent, json
+print(json.dumps({"notice": consent.notice()}))
+""")
+    assert "any git repository" in out["notice"]

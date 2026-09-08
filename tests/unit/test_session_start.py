@@ -170,6 +170,19 @@ def test_resume_preserves_an_existing_baseline(harness):
     assert state["claimed_at"] == "2026-08-05T20:00:00Z"
 
 
+def test_resume_does_not_overwrite_an_already_recorded_started_at(harness):
+    """`started_at` is written once, at the session's real beginning -- a resume
+    must not push it forward and understate how long the session has run."""
+    harness.make_beads_project()
+    harness.set_bd_json("list", [ISSUE])
+    harness.write_state("sess-1", {"started_at": "2026-08-05T19:00:00Z",
+                                   "current_task": "bd-a1b2",
+                                   "snapshot": {"cost": 1.0, "tokens": 100, "ok": True}})
+    harness.set_ccusage_session("sess-1", cost=8.0, tokens=8000)
+    _start(harness, session_payload(source="resume"))
+    assert harness.read_state("sess-1")["started_at"] == "2026-08-05T19:00:00Z"
+
+
 def test_compaction_preserves_the_baseline(harness):
     harness.make_beads_project()
     harness.set_bd_json("list", [ISSUE])

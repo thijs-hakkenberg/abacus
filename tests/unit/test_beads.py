@@ -246,3 +246,123 @@ import beads, json
 print(json.dumps({"ok": beads.close("bd-1", reason="done well")}))
 """)
     assert any("bd-1" in c for c in harness.bd_calls())
+
+
+def test_abacus_bd_cmd_override_is_honoured(harness):
+    """A test override (or an unusual install) can name the bd binary explicitly
+    rather than relying on PATH resolution."""
+    out = _probe(harness, """
+import beads, json
+print(json.dumps({"cmd": beads.bd_cmd()}))
+""", ABACUS_BD_CMD="/some/other/bd --flag")
+    assert out["cmd"] == ["/some/other/bd", "--flag"]
+
+
+def test_show_of_a_non_list_non_dict_json_value_returns_none(harness):
+    """`bd show --json` is documented as one object wrapped in an array; a bare
+    scalar would be a contract violation from bd itself and must not be handed
+    to a caller expecting a dict."""
+    harness.set_bd("show", stdout="42", rc=0)
+    out = _probe(harness, """
+import beads, json
+print(json.dumps({"result": beads.show("bd-1")}))
+""")
+    assert out["result"] is None
+
+
+def test_most_recent_skips_non_dict_entries(harness):
+    out = _probe(harness, """
+import beads, json
+issues = [None, "not a dict", {"id": "a", "updated_at": "2026-01-01T00:00:00Z"}]
+print(json.dumps({"id": (beads.most_recent(issues) or {}).get("id")}))
+""")
+    assert out["id"] == "a"
+
+
+def test_most_recent_of_an_empty_list_is_none(harness):
+    out = _probe(harness, """
+import beads, json
+print(json.dumps({"result": beads.most_recent([])}))
+""")
+    assert out["result"] is None
+
+
+def test_init_returns_true_only_after_a_successful_read_back(harness):
+    harness.set_bd(None, stdout="ok", rc=0)
+    harness.set_bd_json("list", [])
+    out = _probe(harness, """
+import beads, json
+print(json.dumps({"ok": beads.init()}))
+""")
+    assert out["ok"] is True
+
+
+def test_init_returns_false_when_bd_init_itself_fails(harness):
+    harness.set_bd("init", stdout="", rc=1)
+    out = _probe(harness, """
+import beads, json
+print(json.dumps({"ok": beads.init()}))
+""")
+    assert out["ok"] is False
+
+
+def test_init_returns_false_when_the_readback_fails_despite_a_clean_exit(harness):
+    """A zero exit from `bd init` is not proof of a usable workspace -- bd embeds
+    a Dolt database, and a broken one only surfaces on the first read."""
+    harness.set_bd("init", stdout="ok", rc=0)
+    harness.set_bd("list", stdout="", rc=1)
+    out = _probe(harness, """
+import beads, json
+print(json.dumps({"ok": beads.init()}))
+""")
+    assert out["ok"] is False
+
+
+def test_dolt_push_reports_success(harness):
+    harness.set_bd("dolt", stdout="ok", rc=0)
+    out = _probe(harness, """
+import beads, json
+print(json.dumps({"ok": beads.dolt_push()}))
+""")
+    assert out["ok"] is True
+
+
+def test_dolt_sync_reports_failure(harness):
+    harness.set_bd("dolt", stdout="", rc=1)
+    out = _probe(harness, """
+import beads, json
+print(json.dumps({"ok": beads.dolt_sync()}))
+""")
+    assert out["ok"] is False
+
+
+def test_run_reports_a_timeout_without_raising(lib_path, monkeypatch):
+    """A wedged bd must not hang the hook that called it; `_run` bounds it and
+    reports rc=124 rather than letting the exception propagate."""
+    import subprocess
+
+    import beads
+
+    def boom(*a, **kw):
+        raise subprocess.TimeoutExpired(cmd="bd", timeout=8)
+
+    monkeypatch.setattr(beads.subprocess, "run", boom)
+    monkeypatch.setattr(beads, "bd_cmd", lambda: ["bd"])
+    rc, out, err = beads._run(["list"])
+    assert rc == 124
+    assert "timed out" in err
+
+
+def test_run_reports_an_oserror_without_raising(lib_path, monkeypatch):
+    """bd resolved on PATH but not actually executable (permissions, a broken
+    symlink) raises OSError from subprocess.run, not a bd-specific error."""
+    import beads
+
+    def boom(*a, **kw):
+        raise OSError("not executable")
+
+    monkeypatch.setattr(beads.subprocess, "run", boom)
+    monkeypatch.setattr(beads, "bd_cmd", lambda: ["bd"])
+    rc, out, err = beads._run(["list"])
+    assert rc == 127
+    assert "not executable" in err

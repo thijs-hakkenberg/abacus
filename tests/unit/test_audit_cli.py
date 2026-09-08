@@ -294,3 +294,97 @@ def test_a_project_with_no_beads_workspace_says_so(harness):
     data = report(harness.run_hook("audit.py", session_payload(), extra_args=("--json",)))
     assert data["ok"] is False
     assert "workspace" in data["reason"].lower()
+
+
+# ── CLI flags ───────────────────────────────────────────────────────────────
+
+def test_stale_after_h_flag_overrides_the_configured_default(harness):
+    """A claim started 2h ago is stale under a 1h threshold, not under the 24h
+    default -- proving the CLI flag, not the config value, won the argument."""
+    data = report(run_audit(harness, [
+        issue("ab-1", status="in_progress", started_at=_hours_ago(2)),
+    ], args=("--stale-after-h", "1")))
+    assert [g["kind"] for g in data["gaps"]] == ["stale-claim"]
+
+
+def test_an_unparsable_stale_after_h_value_is_ignored_not_fatal(harness):
+    """A hand-rolled parser must not exit non-zero on a bad flag value; the
+    default takes over instead of the script crashing an agent turn."""
+    result = run_audit(harness, [
+        issue("ab-1", status="in_progress"),
+    ], args=("--stale-after-h", "not-a-number"))
+    assert result.rc == 0
+
+
+def test_since_flag_is_passed_through_to_the_commit_window(harness):
+    harness.make_git_project()
+    harness.set_git(None, "")
+    run_audit(harness, [issue("ab-1", status="in_progress")],
+              args=("--since", "2026-01-01"))
+    logs = [c for c in harness.git_calls() if "log" in c]
+    assert logs, "expected a git log call"
+    assert "2026-01-01" in logs[0]
+
+
+# ── Text-mode rendering ──────────────────────────────────────────────────────
+
+def test_text_mode_reports_no_gaps_cleanly(harness):
+    harness.set_bd_json("list", [issue("ab-1", status="in_progress"),
+                                 issue("ab-0", metadata={"abacus_schema": 1,
+                                                         "abacus_partial": "false"})])
+    harness.make_beads_project()
+    result = harness.run_hook("audit.py", session_payload())
+    assert result.rc == 0
+    assert "no gaps" in result.stdout
+    assert not result.stdout.lstrip().startswith("{")
+
+
+def test_text_mode_marks_a_fixable_gap_and_leaves_a_stale_claim_unmarked(harness):
+    harness.set_bd_json("list", [
+        issue("ab-1", status="in_progress", started_at="2026-01-01T09:00:00Z"),
+        issue("ab-0"),
+    ])
+    harness.make_beads_project()
+    result = harness.run_hook("audit.py", session_payload())
+    assert result.rc == 0
+    lines = {ln.strip(): ln for ln in result.stdout.splitlines()}
+    fixable_lines = [ln for ln in result.stdout.splitlines() if "[fixable]" in ln]
+    assert any("unattributed" in ln or "ab-0" in ln for ln in fixable_lines)
+    stale_lines = [ln for ln in result.stdout.splitlines() if "stale claim" in ln]
+    assert stale_lines and all("[fixable]" not in ln for ln in stale_lines)
+
+
+def test_text_mode_fix_reports_repairs_and_the_backfilled_note(harness):
+    harness.set_bd_json("list", [issue("ab-1", status="in_progress"), issue("ab-0")])
+    harness.make_beads_project()
+    result = harness.run_hook("audit.py", session_payload(), extra_args=("--fix",))
+    assert result.rc == 0
+    assert "Repaired 1 issue(s): ab-0" in result.stdout
+    assert "abacus_backfilled=true" in result.stdout
+
+
+def test_text_mode_fix_reports_a_write_bd_rejected(harness):
+    harness.set_bd_json("list", [issue("ab-1", status="in_progress"), issue("ab-0")])
+    harness.set_bd("update", "", rc=1)
+    harness.make_beads_project()
+    result = harness.run_hook("audit.py", session_payload(), extra_args=("--fix",))
+    assert result.rc == 0
+    assert "Could NOT write to 1 issue(s): ab-0" in result.stdout
+
+
+def test_text_mode_fix_with_nothing_repairable_says_so(harness):
+    harness.set_bd_json("list", [
+        issue("ab-1", status="in_progress", started_at="2026-01-01T09:00:00Z"),
+    ])
+    harness.make_beads_project()
+    result = harness.run_hook("audit.py", session_payload(), extra_args=("--fix",))
+    assert result.rc == 0
+    assert "Nothing was repairable without a judgement call." in result.stdout
+
+
+def test_text_mode_without_fix_says_how_many_are_fixable(harness):
+    harness.set_bd_json("list", [issue("ab-1", status="in_progress"), issue("ab-0")])
+    harness.make_beads_project()
+    result = harness.run_hook("audit.py", session_payload())
+    assert result.rc == 0
+    assert "1 of these can be repaired with --fix." in result.stdout

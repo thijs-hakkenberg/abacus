@@ -25,6 +25,13 @@ import pytest
 
 from conftest import post_bash_payload
 
+
+@pytest.fixture
+def cc(lib_path):
+    import commit_capture
+
+    return commit_capture
+
 BASE = "ba5eba5e" * 5
 C1 = "c0ffee01" * 5
 C2 = "dec0de02" * 5
@@ -186,6 +193,36 @@ def test_the_range_asked_of_git_starts_at_the_watermark(repo):
     _watch(repo)
 
     assert any("%s..HEAD" % BASE in c for c in repo.git_calls())
+
+
+def test_an_unparsable_max_per_boundary_falls_back_to_the_default(cc):
+    """A typo in the config must narrow toward the safe default, not toward 0
+    (which `commits.enabled: false` already exists for) or an exception."""
+    assert cc._cap({"max_per_boundary": "not-a-number"}) == cc.DEFAULT_MAX_PER_BOUNDARY
+    assert cc._cap({}) == cc.DEFAULT_MAX_PER_BOUNDARY
+
+
+def test_inside_returns_false_when_realpath_cannot_resolve_either_path(cc, monkeypatch):
+    def boom(*a, **kw):
+        raise ValueError("nope")
+
+    monkeypatch.setattr(cc.os.path, "realpath", boom)
+    assert cc._inside("/some/root", "/some/root/child") is False
+
+
+def test_a_failed_metadata_write_for_a_commit_edge_does_not_crash_the_hook(repo):
+    repo.write_state("sess-1", _claimed_state(
+        head_watermarks={str(repo.project): BASE}))
+    repo.set_git("log", stdout=git_log(commit_row(C1, AFTER_1)))
+    repo.set_bd("update", stdout="Error: no such issue", rc=1)
+
+    result = _watch(repo)
+
+    assert result.rc == 0
+    assert "Traceback" not in result.stderr
+    # The watermark still advances even though the write bounced -- see the
+    # module docstring: losing one boundary is the smaller failure.
+    assert _watermark(repo) == LATER
 
 
 def test_no_edge_is_written_when_nothing_is_claimed(repo):
