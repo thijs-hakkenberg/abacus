@@ -28,6 +28,12 @@ proposed issues, deciding what a stale claim means — use the `task-audit` skil
 The blocking gap first (`unclaimed` means edits are being denied right now), then what
 `--fix` repaired, then the gaps needing a decision with a concrete command for each.
 
+**A shrunken `untracked-commits` count is not a repair.** Since 0.6.0 a commit carrying
+a written `abacus_commit_*` edge is not counted as untracked, because it was tracked by
+a mechanism the claim-window arithmetic cannot see. The gap is still `fixable: false`
+and the historical commits still are what they were — nothing became repairable
+(adr/013, adr/015). Say which of the two it is when the number moves.
+
 Two things to state rather than imply: a repaired figure carries
 `abacus_backfilled=true` because it is a reconstruction and not a measurement, and
 where no measurement survived the basis is `unavailable` with **no** dollar figure —
