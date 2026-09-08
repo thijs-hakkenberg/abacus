@@ -2,9 +2,11 @@
 
 Claude Code plugin. Denies `Edit`/`Write`/`NotebookEdit`/`MultiEdit` when no beads
 task is in progress, and writes per-task cost, token, duration and model
-attribution onto the beads issue itself as `abacus_*` metadata. Read
-`adr/002-gate-breaks-the-exit-zero-contract.md` before touching the gate, and
-`adr/001-beads-as-task-store-of-record.md` before adding any storage.
+attribution onto the beads issue itself as `abacus_*` metadata, along with the
+commits that task produced. Read
+`adr/002-gate-breaks-the-exit-zero-contract.md` before touching the gate,
+`adr/001-beads-as-task-store-of-record.md` before adding any storage, and
+`adr/015-commit-edges-are-observed-not-inferred.md` before touching commit capture.
 
 ## Architecture
 
@@ -19,7 +21,10 @@ redundant and would drag in a venv (adr/004).
   workspace, malformed payload, or an unexpected exception all **allow**.
 - **`hooks/scripts/watch_bd_commands.py`** (`PostToolUse` on `Bash`) is the
   attribution engine. It tokenises the observed command, and on a claim takes a
-  ccusage snapshot, on a close diffs against it and writes the metadata.
+  ccusage snapshot, on a close diffs against it and writes the metadata. It also
+  notices commands whose verbs could have moved HEAD and calls commit capture —
+  but the verb list is only a cheap trigger, and the four hooks below call capture
+  with no trigger at all.
 - **The other five** (`session_start.py`, also wired to `PreCompact` via
   `--precompact`; `prompt_statusline.py`; `stop_reconcile.py`; `session_end.py`)
   observe and repair. None can block.
@@ -61,6 +66,16 @@ not build that dict anywhere else, including in a command or skill.
   against an hour of work is a wrong answer wearing the costume of a measurement.
   The same rule governs `abacus_tool_calls` from OTEL. See adr/005 and
   `contracts/output/bd-metadata-write.md`.
+- **An edge never travels without its basis, and only witnessed bases are written.**
+  `abacus_commit_<sha12>` = `<basis>:<session-id>:<epoch>`, where the basis is
+  `declared` (git's own trailer parser found `Beads-Task:` in the message's **final
+  paragraph** — put anything after it and it is not a trailer) or `observed` (HEAD
+  moved while that task was claimed). `inferred` — a commit whose timestamp merely
+  falls inside a claim window — is **never written**; it stays a proposal in an audit
+  report, which is adr/013 still holding rather than being reversed. Correctness rests
+  on the HEAD watermark, and on three rails: seed and attribute nothing on first
+  sight, refuse any commit older than the claim, and refuse a move larger than
+  `commits.max_per_boundary`. See adr/015.
 - **A cost figure never travels alone.** `abacus_cost_basis` accompanies every cost.
   Any new consumer must label the figure an estimate; a predecessor tool had to
   withdraw its bare dollar figures for exactly this reason (adr/005).
@@ -107,7 +122,9 @@ would stay green (adr/007).
 | `hooks/hooks.json` | The seven event wirings, matchers and timeouts. Changing a timeout means changing the matching contract's SLA. |
 | `hooks/scripts/gate_edits.py` | The gate. The six-step decision ladder. |
 | `hooks/scripts/watch_bd_commands.py` | Claim/close detection and attribution. |
-| `hooks/lib/attribution.py` | The only constructor of `abacus_*` keys. |
+| `hooks/lib/attribution.py` | The only constructor of `abacus_*` keys, commit edges included. |
+| `hooks/lib/commit_capture.py` | Diffs HEAD against the watermark and applies the three rails. Five callers share it; the watermark, not the caller, is what makes it correct. |
+| `hooks/lib/gitlog.py` | Read-only `git`. Asks git rather than parsing a command's stdout, uses `%ct` because `parse_iso` only strips a trailing `Z`, and deliberately **includes merges** — a squash-merge commit is the work. |
 | `hooks/lib/ccusage.py` | Pinned `npx ccusage` wrapper, 30s snapshot cache. The closing read must pass `fresh=True`. |
 | `hooks/lib/beads.py` | `bd` wrapper. `bd show --json` returns an **array** — take `[0]`. A non-zero exit from `bd list` means *no database resolved*, categorically different from `[]`. `init()` is the only call that creates anything, and returns True only on a read-back. |
 | `hooks/lib/abacus_config.py` | Config load with per-key defaults; a malformed file falls back entirely. |
@@ -131,7 +148,7 @@ would miss an import error, a stray `print` corrupting the JSON envelope, or a
 non-zero exit that only appears under the real entrypoint — all three are failure
 modes this plugin is specifically vulnerable to.
 
-The suite is **fully offline**: `bd` and `npx` are stubbed on `PATH` and record
+The suite is **fully offline**: `bd`, `npx` and `git` are stubbed on `PATH` and record
 their argv, `HOME` is sandboxed per test. No test may touch a real beads database,
 spawn a real `npx`, or read the user's real `~/.claude`. When asserting a `bd`
 write, assert on the recorded argv — the flags are emitted in sorted key order
