@@ -451,6 +451,17 @@ def lib_path(monkeypatch):
     return LIB
 
 
+@pytest.fixture
+def scripts_path(monkeypatch):
+    """Put hooks/scripts on sys.path for direct unit tests of a script's pure,
+    side-effect-free helper functions (e.g. command parsing). The script's own
+    entrypoint behaviour must still be driven as a real subprocess via
+    `run_hook` — this is only for functions that do no I/O and gain nothing
+    from the extra isolation."""
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    return SCRIPTS
+
+
 def pre_tool_payload(session_id="sess-1", tool="Edit", cwd=None, **extra):
     p = {
         "session_id": session_id,

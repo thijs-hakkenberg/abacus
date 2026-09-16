@@ -225,3 +225,127 @@ print(json.dumps(ccusage.snapshot("sess-1")))
 """, PATH=str(harness.stub_dir))
     assert snap["ok"] is False
     assert snap["cost"] == 0.0
+
+
+def test_a_second_process_reads_the_first_process_disk_cache(harness):
+    """The in-memory `_MEMO` dict only helps within one process's lifetime; a
+    hook is a fresh process every time, so the disk cache is what actually saves
+    the second npx spawn across two hook invocations."""
+    harness.set_ccusage_session("sess-1", cost=3.0, tokens=300)
+    _run_probe(harness, """
+import ccusage, json
+print(json.dumps(ccusage.snapshot("sess-1")))
+""")
+    assert len(harness.npx_calls()) == 1
+
+    out = _run_probe(harness, """
+import ccusage, json
+print(json.dumps(ccusage.snapshot("sess-1")))
+""")
+    assert len(harness.npx_calls()) == 1, "the second process should have hit the disk cache"
+    assert out["cost"] == 3.0
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "Defect, not behaviour: hooks/lib/ccusage.py's _read_cache does "
+    "`(data or {}).get(session_id)`, which crashes with AttributeError when the "
+    "on-disk cache file parses as valid JSON that is not a dict (e.g. a bare "
+    "list) -- every *other* failure path in this module degrades to None/"
+    "ok=False instead, per its own module docstring ('degrades to a zeroed "
+    "snapshot ... on every failure path rather than raising'). A caller behind "
+    "hook_io.guard() is unaffected (guard() fails open on any exception), but "
+    "ccusage.snapshot() called directly, as here, is not. Reported per this "
+    "coverage task's 'prefer tests over hooks/ changes' instruction rather than "
+    "patched -- symmetric with the false-zero-baseline gap already reported in "
+    "test_attribution.py."
+))
+def test_a_non_dict_cache_file_is_treated_as_empty_rather_than_raising(harness):
+    harness.set_ccusage_session("sess-1", cost=2.0, tokens=200)
+    cache_path = os.path.join(str(harness.state_dir), "ccusage-cache.json")
+    with open(cache_path, "w", encoding="utf-8") as f:
+        f.write("[1, 2, 3]")
+    snap = _run_probe(harness, """
+import ccusage, json
+print(json.dumps(ccusage.snapshot("sess-1")))
+""")
+    assert snap["ok"] is True
+    assert snap["cost"] == 2.0
+
+
+def test_an_unwritable_state_dir_does_not_fail_the_snapshot(harness):
+    """The cache write is an optimisation; losing it must not fail the call that
+    triggered it."""
+    harness.set_ccusage_session("sess-1", cost=1.5, tokens=150)
+    os.chmod(str(harness.state_dir), 0o500)
+    try:
+        snap = _run_probe(harness, """
+import ccusage, json
+print(json.dumps(ccusage.snapshot("sess-1")))
+""")
+    finally:
+        os.chmod(str(harness.state_dir), 0o700)
+    assert snap["ok"] is True
+    assert snap["cost"] == 1.5
+
+
+def test_an_unparsable_ttl_env_value_falls_back_to_the_default(harness):
+    harness.set_ccusage_session("sess-1", cost=1.0, tokens=1)
+    out = _run_probe(harness, """
+import ccusage, json
+a = ccusage.snapshot("sess-1")
+b = ccusage.snapshot("sess-1")
+print(json.dumps([a, b]))
+""", ABACUS_CACHE_TTL_S="not-a-number")
+    assert len(harness.npx_calls()) == 1, "an unparsable TTL should fall back to the real default, not 0"
+
+
+def test_abacus_ccusage_cmd_override_replaces_the_pinned_npx_invocation(harness):
+    """A test override (or an unusual install) can name the ccusage entry point
+    directly rather than going through `npx`."""
+    harness.set_ccusage_session("sess-1", cost=1.0, tokens=1)
+    override = "%s %s" % (sys.executable, os.path.join(str(harness.stub_dir), "npx"))
+    _run_probe(harness, """
+import ccusage, json
+print(json.dumps(ccusage.snapshot("sess-1")))
+""", ABACUS_CCUSAGE_CMD=override)
+    # The override's own first token must be what actually ran -- not the pinned
+    # `npx -y ccusage@<version>` invocation.
+    assert "ccusage@" not in " ".join(harness.npx_calls())
+
+
+def test_diff_treats_a_non_numeric_field_as_a_zero_delta(harness):
+    out = _run_probe(harness, """
+import ccusage, json
+print(json.dumps(ccusage.diff({"cost": "not-a-number", "tokens": 100, "ok": True},
+                              {"cost": 4.0, "tokens": 400, "ok": True})))
+""")
+    assert out["cost"] == 0.0
+
+
+def test_main_with_no_argv_prints_usage_and_returns_2(lib_path):
+    import ccusage
+
+    old_argv = sys.argv
+    sys.argv = ["ccusage.py"]
+    try:
+        rc = ccusage.main()
+    finally:
+        sys.argv = old_argv
+    assert rc == 2
+
+
+def test_main_with_a_session_id_prints_its_snapshot(lib_path, harness, monkeypatch, capsys):
+    for key, value in harness.env().items():
+        monkeypatch.setenv(key, value)
+    harness.set_ccusage_session("sess-1", cost=2.0, tokens=200)
+    import ccusage
+
+    old_argv = sys.argv
+    sys.argv = ["ccusage.py", "sess-1"]
+    try:
+        rc = ccusage.main()
+    finally:
+        sys.argv = old_argv
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert out["cost"] == 2.0

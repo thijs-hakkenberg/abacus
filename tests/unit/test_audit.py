@@ -206,6 +206,23 @@ def test_an_unrecognised_schema_version_is_left_alone(audit):
     assert not of_kind(gaps, audit.KIND_UNFINALISED)
 
 
+def test_an_unparsable_schema_value_is_also_left_alone(audit):
+    """A schema field that is not even a number is not "known", but it is also
+    not evidence of anything -- decline exactly as an unrecognised version does,
+    rather than crashing the audit over one malformed issue."""
+    gaps = audit.audit([issue("ab-1", metadata=attributed(abacus_schema="not-a-number"))], now=NOW)
+    assert not of_kind(gaps, audit.KIND_UNATTRIBUTED)
+    assert not of_kind(gaps, audit.KIND_UNFINALISED)
+
+
+def test_a_finalised_non_partial_issue_with_a_known_schema_is_not_reported(audit):
+    """The clean-bill-of-health path through the closed-issue detector: attributed,
+    known schema, and not partial -- no gap of any kind."""
+    gaps = audit.audit([issue("ab-1", metadata=attributed(abacus_partial=False))], now=NOW)
+    assert not of_kind(gaps, audit.KIND_UNFINALISED)
+    assert not of_kind(gaps, audit.KIND_UNATTRIBUTED)
+
+
 # ── Work that never became a task ───────────────────────────────────────────
 
 def commit(sha, when, subject="did a thing"):
@@ -245,6 +262,29 @@ def test_a_commit_with_an_unreadable_timestamp_is_not_reported(audit):
     """Cannot place it in time, so cannot say it was untracked. Stay quiet."""
     gaps = audit.audit([], now=NOW, commits=[commit("ddd", "not-a-date")])
     assert not of_kind(gaps, audit.KIND_UNTRACKED_COMMITS)
+
+
+def test_a_commit_with_a_recorded_edge_is_not_untracked_even_outside_every_window(audit):
+    """A commit already carrying an `abacus_commit_*` edge was tracked by a
+    mechanism the claim-window arithmetic cannot see (adr/015) -- it must not
+    be double-reported as untracked just because no window happens to cover it."""
+    gaps = audit.audit(
+        [issue("ab-1", metadata=attributed(abacus_commit_bbbbbbbbbbbb="observed:sess-1:1700000000"))],
+        now=NOW,
+        commits=[commit("bbbbbbbbbbbb", "2026-08-31T11:30:00Z")],
+    )
+    assert not of_kind(gaps, audit.KIND_UNTRACKED_COMMITS)
+
+
+def test_an_issue_closed_before_it_started_contributes_no_window(audit):
+    """A malformed pair of timestamps (closed before started) must not become a
+    negative-width window that then makes some unrelated commit look tracked
+    by an interval that never really existed."""
+    windows = audit._windows(
+        [issue("ab-1", started_at="2026-08-31T10:00:00Z", closed_at="2026-08-31T09:00:00Z")],
+        NOW,
+    )
+    assert windows == []
 
 
 def test_untracked_commits_are_reported_as_one_gap(audit):

@@ -158,3 +158,35 @@ precisely so that is deterministic.
 in `tests/features/steps/` and drives a real hook. **An unbound scenario fails
 rather than skips** — the conformance test enforces it, because a feature space
 that silently skips is documentation pretending to be a test.
+
+### Measuring coverage of `hooks/`
+
+```bash
+sh scripts/coverage.sh
+```
+
+A plain `pytest --cov=hooks` under-reports badly, for the same reason the suite
+runs hooks as real subprocesses in the first place: coverage's tracer lives in the
+parent pytest process, so it never sees a `python3 hooks/scripts/*.py` child, and a
+script that is only ever driven that way — `watch_bd_commands.py`, `gate_edits.py`,
+every entrypoint in `hooks/scripts/` — reports near 0% even though the suite
+exercises it constantly.
+
+`scripts/coverage.sh` wires up coverage's own subprocess support instead:
+`COVERAGE_PROCESS_START` plus `.covboot/sitecustomize.py` on `PYTHONPATH` make every
+such child start its own coverage measurement the moment its interpreter boots, and
+`coverage combine` merges every child's data file with the parent's afterward. The
+script fails loudly, rather than silently reporting the same too-low number a second
+time, if no per-process data file actually gets produced — that failure mode is real
+and has already happened once during development. `.coveragerc`'s `source` is an
+absolute path via `${ABACUS_COVERAGE_SOURCE}` env interpolation rather than the
+relative `hooks`, because each hook subprocess's cwd is a sandboxed tmp project
+directory, not the repo root, and a relative path resolves against the wrong one.
+
+The target is `max(95, ceil(baseline) + 1)`, evaluated fresh each time coverage is
+raised rather than pinned to one number. Prefer adding a test for an uncovered line
+over changing `hooks/` to make it easier to cover — coverage is the goal here, not
+an excuse to touch the gate's decision ladder or a fail-open handler. A line that is
+genuinely unreachable given a callee's real contract (e.g. a defensive `is None`
+check against a helper that in fact never returns `None`) is worth naming as such
+in a comment or a commit message rather than contorted into false reachability.

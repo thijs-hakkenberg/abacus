@@ -97,6 +97,67 @@ def test_state_file_is_not_world_readable(store, harness):
     assert mode & 0o077 == 0, f"expected user-only perms, got {oct(mode)}"
 
 
+def test_save_returns_false_when_mkstemp_fails(store):
+    def boom(*a, **kw):
+        raise OSError("disk full")
+
+    orig = store.tempfile.mkstemp
+    store.tempfile.mkstemp = boom
+    try:
+        assert store.save("s1", {"a": 1}) is False
+    finally:
+        store.tempfile.mkstemp = orig
+
+
+def test_save_returns_false_and_cleans_up_the_tmp_file_when_replace_fails(store, harness):
+    """os.replace is the atomic step; if it fails the half-written temp file must
+    not be left behind for a later reader to trip over."""
+    def boom(*a, **kw):
+        raise OSError("cross-device link")
+
+    orig = store.os.replace
+    store.os.replace = boom
+    try:
+        ok = store.save("s1", {"a": 1})
+    finally:
+        store.os.replace = orig
+    assert ok is False
+    leftovers = [p for p in os.listdir(harness.state_dir) if ".tmp" in p]
+    assert leftovers == []
+
+
+def test_prune_skips_files_that_are_not_session_state(store, harness):
+    stray = harness.state_dir / "not-a-session.json"
+    stray.write_text("{}")
+    stale = time.time() - (99 * 86400)
+    os.utime(stray, (stale, stale))
+
+    removed = store.prune(max_age_days=14)
+
+    assert stray.exists()
+    assert removed == []
+
+
+def test_prune_continues_past_a_file_it_cannot_stat(store, harness):
+    """A file can vanish between `os.listdir` and `os.path.getmtime` (another
+    process pruning concurrently, say). That one entry is skipped, not fatal."""
+    store.save("s1", {"a": 1})
+    real_getmtime = store.os.path.getmtime
+
+    def flaky(path):
+        if "session-s1.json" in str(path):
+            raise OSError("vanished")
+        return real_getmtime(path)
+
+    store.os.path.getmtime = flaky
+    try:
+        removed = store.prune(max_age_days=0)
+    finally:
+        store.os.path.getmtime = real_getmtime
+    assert removed == []
+    assert (harness.state_dir / "session-s1.json").exists()
+
+
 def test_concurrent_saves_never_yield_a_partial_read(store, harness):
     """A reader must see either the old or the new doc, never a truncated one.
 

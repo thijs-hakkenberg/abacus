@@ -160,6 +160,17 @@ def test_records_the_claimed_task_when_state_has_none(harness):
     assert state["snapshot"]["cost"] == 4.0
 
 
+def test_an_issue_with_no_id_is_not_tracked(harness):
+    """Defensive: bd's contract always includes an id, but the repair path must
+    not write a state file keyed on an empty task id if it ever did not."""
+    harness.make_beads_project()
+    harness.set_bd_json("list", [{"title": "no id here", "status": "in_progress",
+                                  "updated_at": "2026-08-05T21:34:12Z"}])
+    _gate(harness)
+    state = harness.read_state("sess-1") or {}
+    assert not state.get("current_task")
+
+
 def test_does_not_re_snapshot_a_task_already_being_tracked(harness):
     """Re-snapshotting on every edit would reset the baseline and lose the cost
     accrued so far."""

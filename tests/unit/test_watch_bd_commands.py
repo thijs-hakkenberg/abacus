@@ -300,6 +300,16 @@ def test_a_claim_with_no_explicit_id_resolves_via_bd(harness):
     assert harness.read_state("sess-1")["current_task"] == "bd-a1b2"
 
 
+def test_a_claim_with_no_id_and_bd_unavailable_records_nothing(harness):
+    """`bd update --claim` with no explicit id has to ask bd which issue that
+    claimed; if bd itself cannot answer there is no honest guess to fall back
+    on, and nothing should be recorded rather than a fabricated task id."""
+    harness.make_beads_project()
+    harness.remove_bd()
+    _watch(harness, "bd update --claim")
+    assert harness.read_state("sess-1") in (None, {})
+
+
 def test_an_update_without_claim_is_not_a_boundary(harness):
     harness.make_beads_project()
     harness.set_bd_json("show", [ISSUE])

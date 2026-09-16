@@ -133,3 +133,38 @@ def test_an_explicit_path_argument_is_never_second_guessed(default_paths, harnes
     _write_legacy_config(harness, {"gate": {"non_beads_project": "block"}})
     cfg = default_paths.load_config(path=str(harness.tmp / "nope.json"))
     assert cfg["gate"]["non_beads_project"] == "warn"
+
+
+# ── malformed or partial config content ─────────────────────────────────────
+
+def test_a_null_valued_key_in_the_overlay_does_not_erase_the_default(conf, harness):
+    """A `null` in the user's JSON is "I did not set this", not "delete this" --
+    the merge must skip it rather than overwrite a default with None."""
+    (harness.state_dir / "config.json").write_text(json.dumps({"gate": None}))
+    cfg = conf.load_config()
+    assert cfg["gate"]["non_beads_project"] == "warn"
+    assert cfg["gate"]["enabled"] is True
+
+
+def test_a_config_file_that_is_valid_json_but_not_an_object_is_ignored(conf, harness):
+    (harness.state_dir / "config.json").write_text(json.dumps([1, 2, 3]))
+    cfg = conf.load_config()
+    assert cfg["gate"]["non_beads_project"] == "warn"
+
+
+def test_is_disabled_is_false_when_state_dir_cannot_be_resolved(lib_path, monkeypatch):
+    """The marker-file check must degrade to "not disabled" rather than raise --
+    a broken state dir must never silently disable the gate's own kill switch
+    check in a way that looks like intentional enablement."""
+    import sys
+
+    import abacus_config
+
+    monkeypatch.delenv("ABACUS_DISABLE", raising=False)
+
+    class _BrokenStateStore(object):
+        def state_dir(self):
+            raise OSError("state dir unreadable")
+
+    monkeypatch.setitem(sys.modules, "state_store", _BrokenStateStore())
+    assert abacus_config.is_disabled() is False
